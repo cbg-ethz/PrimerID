@@ -113,10 +113,7 @@ int main(int argc, char *argv[])
 	ref3223.display_strains_hetero();
 	ref3236.display_strains_hetero();
 	
-	
-	
 	// 2.) load alignments
-	/*
 	std::cout << "2. Loading alignments\n";
 	alignments DATA(inputFiles);
 	
@@ -133,7 +130,6 @@ int main(int argc, char *argv[])
 	DATA.estimate_effective_RNA_number(true);
 	
 	DATA.display_raw_and_primerID_counts();
-	*/
 	
 	return EXIT_SUCCESS;
 }

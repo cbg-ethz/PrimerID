@@ -48,6 +48,7 @@ class reference
 		
 	// loci information
 		std::vector<int> included_loci;
+		std::vector<int> not_included_loci;
 		
 	// heterozygous information
 		int no_heterozygous_loci;
