@@ -304,6 +304,11 @@ void reference::normalise_counts()
 
 void reference::reset_consensus_counts()
 {
+	PID_total = 0;
+	raw_total = 0;
+	
 	for (record& i : all_reference_strains)
 		i.PID_counts = 0;
+	
+	freq_initialised = false;
 }

@@ -1,6 +1,7 @@
 #ifndef _REFERENCE_HPP_
 #define _REFERENCE_HPP_
 
+
 #include <vector>
 #include <string>
 

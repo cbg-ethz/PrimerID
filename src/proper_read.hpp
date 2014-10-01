@@ -9,7 +9,7 @@
 struct proper_read
 {
 	// reference stuff
-	const reference& _reference;
+	const reference& _ref;
 	
 	int best_reference;
 	int hamming_distance_to_best_reference;
@@ -20,13 +20,16 @@ struct proper_read
 	
 	// heterozygous
 	std::string heterozygous_loci_string;
-	std::vector<int> indices_valid_heterozygous;
+	//std::vector<int> indices_valid_heterozygous;
 	
 	// homozygous
 	std::string homozygous_loci_string;
 	
 	/* member functions*/
 	proper_read(const std::string& input, const reference& _ref);
+	
+	std::tuple<uint64_t, uint64_t, uint64_t> calculate_homozygous_mismatches() const;
+	std::tuple<uint64_t, uint64_t, uint64_t> hetero_hamming_distance(const proper_read& other_read) const;
 };
 
 struct consensus_read : public proper_read

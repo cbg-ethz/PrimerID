@@ -325,27 +325,88 @@ std::string call_consensus(const std::vector<proper_read>& strings, int minC, do
 	return consensus;
 }
 
-/*
-void __verbose(const std::string& PrimerID, const std::vector<proper_read>& reads, int valid_reads)
+void __verbose(const std::string& PrimerID, const std::vector<proper_read>& reads, int valid_reads, double mismatch_rate)
 {
 	std::cout << PrimerID << " (" << reads.size() << ", valid: " << valid_reads << ") - " << std::fixed << std::setprecision(3) << mismatch_rate << "\n";
-	for (int i = 0; i < reads.size(); ++i)
+	for (const proper_read& i : reads)
 	{
-		std::cout << reads[i].heterozygous_loci_string;
+		std::cout << i.heterozygous_loci_string;
 		std::cout << '\t';
-		if (reads[i].best_reference == _reference.K)
+		if (i.hamming_distance_to_best_reference >= 2)
 			std::cout << "RECOMBINANT";
 		else
-			std::cout << _reference.all_reference_strains[reads[i].best_reference].name;
+			std::cout << i._ref.all_reference_strains[i.best_reference].name;
 	
-		std::cout << " (" << reads[i].hamming_distance_to_best_reference << " / " << reads[i].no_of_valid_heterozygous_bases << ")\n";
+		std::cout << " (" << i.hamming_distance_to_best_reference << " / " << i.no_of_valid_heterozygous_bases << ")\n";
 	}
 	std::cout << "\n";
 }
-*/
 
-std::string alignment::call_consensus_and_remove_collisions(std::vector<proper_read>& reads, int minDisplay, const std::string& PrimerID)
+std::string alignment::call_consensus_and_remove_collisions(const std::vector<proper_read>& reads, int minDisplay, const std::string& PrimerID)
 {
+	// 1.) first check for number of valid_reads
+	int valid_reads = 0;
+	for (const proper_read& i : reads)
+	{
+		valid_reads += (i.no_of_valid_heterozygous_bases >= reference::min_valid);
+	}
+	
+	if ((valid_reads < _min_current_coverage) || (valid_reads < reads.size() * _min_majority_fraction))
+		return std::string("1");
+	
+	// 2.) now check for observed collision pair rate
+	const double impurity_rate = 0.1;
+	
+	int no_mismatched_pairs = 0;
+	int no_valid_pairs = 0;
+	std::tuple<uint64_t, uint64_t, uint64_t> temp;
+	
+	int mismatches;//, valid_trials;
+	for (int i = 0; i < reads.size()-1; ++i)
+	{
+		if (reads[i].no_of_valid_heterozygous_bases >= reference::min_valid)
+		{
+			for (int j = i+1; j < reads.size(); ++j)
+			{
+				if (reads[j].no_of_valid_heterozygous_bases >= reference::min_valid)
+				{
+					temp = reads[i].hetero_hamming_distance(reads[j]);
+					
+					mismatches = std::get<0>(temp);
+					//valid_trials = std::get<1>(temp);
+					
+					//if (valid_trials >= reference::min_valid-2)
+					//{
+						++no_valid_pairs;
+						no_mismatched_pairs += (mismatches >= 3);
+					//}
+				}
+			}
+		}
+	}
+	
+	double fraction_collision_pairs = 1;
+	if (no_valid_pairs)
+		fraction_collision_pairs = static_cast<double>(no_mismatched_pairs) / no_valid_pairs;
+	
+	//bool collision = (fraction_collision_pairs > 2.0*impurity_rate*(1-impurity_rate) *valid_reads/(valid_reads-1));
+	bool collision = (fraction_collision_pairs > 0.25);
+	
+	if (collision)
+	{
+		// collision detected
+		//if (minDisplay)
+		//	__verbose(PrimerID, reads, valid_reads, fraction_collision_pairs);
+		
+		return std::string("0");
+	}
+	else
+	{
+		// probably no collision
+		return call_consensus(reads, _min_current_coverage, _min_majority_fraction);
+	}
+	
+	/*
 	// do pileup to call most represented strain
 	int valid_reads = 0;
 	std::vector<int> Ref_pileup(_reference.K + 1, 0);
@@ -377,7 +438,8 @@ std::string alignment::call_consensus_and_remove_collisions(std::vector<proper_r
 			index_max = k;
 		}
 	}
-	
+	*/
+	/*
 	bool collision = false;
 	double match_rate = 0;
 	if (index_max != _reference.K)
@@ -429,13 +491,14 @@ std::string alignment::call_consensus_and_remove_collisions(std::vector<proper_r
 	else
 	{
 		// collision
-		if ((!(PrimerID.empty())) && (reads.size() > minDisplay) && (minDisplay)/* && (index_max == _reference.K)*/)
+		if ((!(PrimerID.empty())) && (reads.size() > minDisplay) && (minDisplay) && (index_max == _reference.K))
 		{
 			//__verbose(const std::string& PrimerID, const std::vector<proper_read>& reads, int valid_reads)
 		}
 		
 		return std::string("0");
 	}
+	*/
 }
 
 void alignment::remove_primerID_collisions(int minC, double minMajorFraction, bool report, int minDisplay)
@@ -453,11 +516,11 @@ void alignment::remove_primerID_collisions(int minC, double minMajorFraction, bo
 	
 	std::pair<std::map<std::string, consensus_read>::iterator, bool> it;
 	
-	for (std::map<std::string, std::vector<proper_read> >::iterator i = raw_primerID_map.begin(); i != raw_primerID_map.end(); ++i)
+	for (auto& i : raw_primerID_map)
 	{
-		if (i->second.size() >= minC)
-		{
-			consensus = call_consensus_and_remove_collisions(i->second, minDisplay, i->first);
+		//if (i.second.size() >= minC)
+		//{
+			consensus = call_consensus_and_remove_collisions(i.second, minDisplay, i.first);
 			
 			switch(consensus[0])
 			{
@@ -475,16 +538,19 @@ void alignment::remove_primerID_collisions(int minC, double minMajorFraction, bo
 					// OK, proper consensus
 					++number_singletons;
 					
-					collision_free_primerID_map.emplace(i->first, &(i->second));
+					collision_free_primerID_map.emplace(i.first, &(i.second));
 					it = consensus_primerID_map.emplace(std::piecewise_construct,
-						std::forward_as_tuple(i->first),
-						std::forward_as_tuple(consensus, _reference, i->second.size())
+						std::forward_as_tuple(i.first),
+						std::forward_as_tuple(consensus, _reference, i.second.size())
 					);
+						
+					//if (it.first->second.hamming_distance_to_best_reference >= 2)
+					//		__verbose(i.first, i.second, i.second.size(), 0.2);
 						
 					_reference.assign_counts(consensus, true);
 					break;
 			}
-		}
+			//}
 	}
 	
 	_reference.normalise_counts();
@@ -514,27 +580,21 @@ void alignment::show_primerIDs_with_min_coverage(int minC) const
 
 std::tuple<uint64_t, uint64_t, uint64_t> alignment::calculate_RT_mismatches() const
 {
-	uint64_t mismatches = 0;
-	uint64_t trials = 0;
-	uint64_t numberN = 0;
+	int mismatches = 0;
+	int valid_trials = 0;
+	int Ns = 0;
+	std::tuple<uint64_t, uint64_t, uint64_t> temp;
 	
-	for (std::map<std::string, consensus_read>::const_iterator i = consensus_primerID_map.begin(); i != consensus_primerID_map.end(); ++i)
+	for (const std::pair<const std::string, consensus_read>& i : consensus_primerID_map)
 	{
-		for (int j = 0; j < _reference.no_homozygous_loci; ++j)
-		{
-			if (i->second.homozygous_loci_string[j] != 'N')
-			{
-				++trials;
-				mismatches += (i->second.homozygous_loci_string[j] != _reference.homozygous_string[j]);
-			}
-			else
-			{
-				++numberN;
-			}
-		}
+		temp = i.second.calculate_homozygous_mismatches();
+		
+		mismatches += std::get<0>(temp);
+		valid_trials += std::get<1>(temp);
+		Ns += std::get<2>(temp);
 	}
 	
-	return std::tuple<uint64_t, uint64_t, uint64_t>(mismatches, trials, numberN);
+	return std::tuple<uint64_t, uint64_t, uint64_t>(mismatches, valid_trials, Ns);
 }
 
 
@@ -784,7 +844,7 @@ void alignments::remove_primerID_collisions(int minC, double minMajorFraction, b
 	
 	for (std::vector<alignment>::iterator i = collections_alignments.begin(); i != collections_alignments.end(); ++i)
 	{
-		i->remove_primerID_collisions(_min_current_coverage, _min_majority_fraction, printOut);
+		i->remove_primerID_collisions(_min_current_coverage, _min_majority_fraction, printOut, 20);
 	}
 }
 
@@ -792,26 +852,26 @@ void alignments::remove_primerID_collisions(int minC, double minMajorFraction, b
 double alignments::estimate_RT_substitution_rate(bool report)
 {
 	double mismatches = 0;
-	uint64_t trials = 0;
-	uint64_t numberN = 0;
+	uint64_t valid_trials = 0;
+	uint64_t Ns = 0;
 	
 	std::tuple<uint64_t, uint64_t, uint64_t> result;
 	
-	for (std::vector<alignment>::const_iterator i = collections_alignments.begin(); i != collections_alignments.end(); ++i)
+	for (const auto& i : collections_alignments)
 	{
-		result = i->calculate_RT_mismatches();
+		result = i.calculate_RT_mismatches();
 		
 		mismatches += std::get<0>(result);
-		trials += std::get<1>(result);
-		numberN += std::get<2>(result);
+		valid_trials += std::get<1>(result);
+		Ns += std::get<2>(result);
 	}
 	
-	double sub_rate = mismatches/trials;
+	double sub_rate = mismatches/valid_trials;
 	
 	if (report)
 	{
-		double CI_lower = boost::math::binomial_distribution<>::find_lower_bound_on_p(trials, mismatches, 0.025);
-		double CI_upper = boost::math::binomial_distribution<>::find_upper_bound_on_p(trials, mismatches, 0.025);
+		double CI_lower = boost::math::binomial_distribution<>::find_lower_bound_on_p(valid_trials, mismatches, 0.025);
+		double CI_upper = boost::math::binomial_distribution<>::find_upper_bound_on_p(valid_trials, mismatches, 0.025);
 	
 		std::cout << std::string(50, '=') << '\n';
 		std::cout << "RT substitution rate" << '\n';
@@ -819,8 +879,8 @@ double alignments::estimate_RT_substitution_rate(bool report)
 		std::cout << '\n';
 	
 		std::cout << "           mt bases: " << static_cast<int>(mismatches) << '\n';
-		std::cout << "        Total bases: " << trials << '\n';
-		std::cout << "          'N' bases: " << numberN << '\n';
+		std::cout << "        Total bases: " << valid_trials << '\n';
+		std::cout << "          'N' bases: " << Ns << '\n';
 		std::cout << '\n';
 	
 		std::cout << "   Est. RT sub rate: " << std::scientific << std::setprecision(2) << sub_rate << '\n';
@@ -1000,16 +1060,16 @@ void alignments::show_primerIDs_with_min_coverage(int minC) const
 
 void alignments::write_all_consensus_to_fasta() const
 {
-	for (std::vector<alignment>::const_iterator i = collections_alignments.begin(); i != collections_alignments.end(); ++i)
+	for (const alignment& i : collections_alignments)
 	{
-		i->write_consensus_to_fasta();
+		i.write_consensus_to_fasta();
 	}
 }
 
 void alignments::write_all_to_fasta() const
 {
-	for (std::vector<alignment>::const_iterator i = collections_alignments.begin(); i != collections_alignments.end(); ++i)
+	for (const alignment& i : collections_alignments)
 	{
-		i->write_to_fasta();
+		i.write_to_fasta();
 	}
 }

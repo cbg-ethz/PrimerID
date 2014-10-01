@@ -25,7 +25,7 @@ class alignment
 		// primerID map to consensus sequence
 		std::map<std::string, consensus_read> consensus_primerID_map;
 		
-		std::string call_consensus_and_remove_collisions(std::vector<proper_read>& reads, int minDisplay, const std::string& PrimerID = "");
+		std::string call_consensus_and_remove_collisions(const std::vector<proper_read>& reads, int minDisplay, const std::string& PrimerID = "");
 		
 	public:
 		int number_singletons;

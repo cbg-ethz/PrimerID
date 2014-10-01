@@ -1,32 +1,25 @@
 #include <cmath>
+#include <tuple>
 
 #include <proper_read.hpp>
+#include <iostream>
 
 // proper_read
-proper_read::proper_read(const std::string& input, const reference& _ref) : _reference(_ref), fullRead(input)
+proper_read::proper_read(const std::string& input, const reference& _reference) : _ref(_reference), no_of_valid_heterozygous_bases(0), fullRead(input)
 {
-	no_of_valid_heterozygous_bases = _ref.no_heterozygous_loci;
+	// 1.) construct heterozygous string
 	
-	// construct heterozygous string
-	for (int i = 0; i < _ref.no_heterozygous_loci; ++i)
+	for (int i : _ref.heterozygous_loci)
 	{
-		const char& allele = fullRead[_ref.heterozygous_loci[i]];
-
-		if (allele != 'N')
-			indices_valid_heterozygous.push_back(i);
-		else
-			--no_of_valid_heterozygous_bases;
-		
-		heterozygous_loci_string.push_back(allele);
+		no_of_valid_heterozygous_bases += (fullRead[i] != 'N');
+		heterozygous_loci_string.push_back(fullRead[i]);
 	}
 	
-	// construct homozygous string
-	for (int i = 0; i < _ref.no_homozygous_loci; ++i)
-	{
-		homozygous_loci_string.push_back(fullRead[_ref.homozygous_loci[i]]);
-	}
+	// 2.) construct homozygous string
+	for (int i : _ref.homozygous_loci)
+		homozygous_loci_string.push_back(fullRead[i]);
 
-	// find closest reference strain	
+	// 3.) find closest reference strain	
 	int best_index = _ref.K;
 	int best_ham = 100000;
 	int cur_ham;
@@ -46,18 +39,61 @@ proper_read::proper_read(const std::string& input, const reference& _ref) : _ref
 	hamming_distance_to_best_reference = best_ham;
 }
 
+std::tuple<uint64_t, uint64_t, uint64_t> proper_read::calculate_homozygous_mismatches() const
+{
+	int mismatches = 0;
+	int valid_trials = 0;
+	int Ns = 0;
+	
+	for (int i = 0; i < homozygous_loci_string.length(); ++i)
+	{
+		if (homozygous_loci_string[i] != 'N')
+		{
+			++valid_trials;
+			mismatches += (homozygous_loci_string[i] != _ref.homozygous_string[i]);
+		}
+		else
+			++Ns;
+	}
+	
+	return std::tuple<uint64_t, uint64_t, uint64_t>(mismatches, valid_trials, Ns);
+}
+
+std::tuple<uint64_t, uint64_t, uint64_t> proper_read::hetero_hamming_distance(const proper_read& other_read) const
+{
+	int mismatches = 0;
+	int valid_trials = 0;
+	int Ns = 0;
+	
+	for (int i = 0; i < _ref.no_heterozygous_loci; ++i)
+	{
+		if ((this->heterozygous_loci_string[i] != 'N') && (other_read.heterozygous_loci_string[i] != 'N'))
+		{
+			++valid_trials;
+			mismatches += (this->heterozygous_loci_string[i] != other_read.heterozygous_loci_string[i]);
+		}
+		else
+			++Ns;
+	}
+		
+	return std::tuple<uint64_t, uint64_t, uint64_t>(mismatches, valid_trials, Ns);
+}
+
 // consensus_read
-consensus_read::consensus_read(const std::string& input, const reference& _ref, int _multiplicity) : proper_read(input, _ref), multiplicity(_multiplicity) {}
+consensus_read::consensus_read(const std::string& input, const reference& _reference, int _multiplicity) : proper_read(input, _reference), multiplicity(_multiplicity) {}
 
 inline long double emission_probability(char X_i, char Z_i, long double s)
 {
-	return (X_i == Z_i ? 1-s : s/3);
+	if (X_i == 'N')
+		return 1;
+	else
+		return (X_i == Z_i ? 1-s : s/3);
 }
 
-inline long double transition_probability(char Z_i, char Z_i_min_1, int n_steps, long double r, const reference& _ref)
+inline long double transition_probability(char Z_i, char Z_i_min_1, int n_steps, long double r, const reference& _reference)
 {
 	long double p_norecombination = pow(1-r, n_steps);
-	long double p_ij = _ref.all_reference_strains[Z_i].frequency + p_norecombination * ((Z_i == Z_i_min_1) - _ref.all_reference_strains[Z_i].frequency);
+	long double p_ij = _reference.all_reference_strains[Z_i].frequency + p_norecombination * ((Z_i == Z_i_min_1) - _reference.all_reference_strains[Z_i].frequency);
 	
 	return p_ij;
 }
@@ -67,49 +103,39 @@ long double consensus_read::log_prob(long double s, long double r) const
 	// performs the full HMM calculation for one sequence
 	// FORWARD algorithm: P(X) = \sum_{Z} P(X, Z)
 	
-	if (no_of_valid_heterozygous_bases > 1)
+	// probability is a function of r, i.e. the likelihood
+	// of this sequence can be used to make inference on r
+	std::vector<long double> f_old(_ref.K), f_new(_ref.K);
+	
+	// 1.) initialize
+	for (int j = 0; j < _ref.K; ++j)
+		f_new[j] = _ref.all_reference_strains[j].frequency * emission_probability(heterozygous_loci_string[0], _ref.all_reference_strains[j].heterozygous_loci_string[0], s);
+	
+	// 2.) recursion
+	long double sum;
+	int jump;
+	
+	for (int i = 1; i < _ref.no_heterozygous_loci; ++i)
 	{
-		// probability is a function of r, i.e. the likelihood
-		// of this sequence can be used to make inference on r
-		std::vector<long double> f_old(_reference.K), f_new(_reference.K);
+		f_new.swap(f_old);
+		jump = _ref.heterozygous_loci[i] - _ref.heterozygous_loci[i-1];
 		
-		// 1.) initialize
-		for (int j = 0; j < _reference.K; ++j)
-			f_new[j] = _reference.all_reference_strains[j].frequency * emission_probability(heterozygous_loci_string[indices_valid_heterozygous[0]], _reference.all_reference_strains[j].heterozygous_loci_string[indices_valid_heterozygous[0]], s);
-		
-		// 2.) recursion
-		long double sum;
-		int jump;
-		
-		for (int i = 1; i < no_of_valid_heterozygous_bases; ++i)
+		for (int j = 0; j < _ref.K; ++j)
 		{
-			f_new.swap(f_old);
-			jump = indices_valid_heterozygous[i] - indices_valid_heterozygous[i-1];
+			sum = 0;
 			
-			for (int j = 0; j < _reference.K; ++j)
+			for (int k = 0; k < _ref.K; ++k)
 			{
-				sum = 0;
-				
-				for (int k = 0; k < _reference.K; ++k)
-				{
-					sum += transition_probability(j, k, jump, r, _reference) * f_old[k];
-				}
-				f_new[j] = emission_probability(heterozygous_loci_string[indices_valid_heterozygous[i]], _reference.all_reference_strains[j].heterozygous_loci_string[indices_valid_heterozygous[i]], s) * sum;
+				sum += transition_probability(j, k, jump, r, _ref) * f_old[k];
 			}
+			f_new[j] = emission_probability(heterozygous_loci_string[i], _ref.all_reference_strains[j].heterozygous_loci_string[i], s) * sum;
 		}
-		
-		// 3.) termination
-		sum = 0;
-		for (int j = 0; j < _reference.K; ++j)
-			sum += f_new[j];
-		
-		return log(sum);
 	}
-	else
-	{
-		// either only or just one proper base
-		// does not contribute to likelihood
-		// except for vertical shift
-		return 0;
-	}
+	
+	// 3.) termination
+	sum = 0;
+	for (int j = 0; j < _ref.K; ++j)
+		sum += f_new[j];
+	
+	return log(sum);
 }

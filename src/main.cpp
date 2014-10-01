@@ -82,11 +82,11 @@ void parse_arguments(int argc, char *argv[])
 		exit(EXIT_FAILURE);
 	}
 	
-	for(std::vector<std::string>::const_iterator i = inputFiles.begin(); i != inputFiles.end(); ++i)
+	for(const std::string& i : inputFiles)
 	{
-		if ((i->find("3223") == std::string::npos) && (i->find("3236") == std::string::npos))
+		if ((i.find("3223") == std::string::npos) && (i.find("3236") == std::string::npos))
 		{
-			std::cout << "Input filename " << *i << " does not contain either '3223' or '3236', which is required for reference assignment purposes\n";
+			std::cout << "Input filename " << i << " does not contain either '3223' or '3236', which is required for reference assignment purposes\n";
 			exit(EXIT_FAILURE);
 		}
 	}
@@ -110,8 +110,8 @@ int main(int argc, char *argv[])
 	ref3223.display_strains_verbose();
 	ref3236.display_strains_verbose();
 	
-	ref3223.display_strains_hetero();
-	ref3236.display_strains_hetero();
+	//ref3223.display_strains_hetero();
+	//ref3236.display_strains_hetero();
 	
 	// 2.) load alignments
 	std::cout << "2. Loading alignments\n";
@@ -119,8 +119,9 @@ int main(int argc, char *argv[])
 	
 	// 3.) process data
 	std::cout << "3. Processing data\n";
-	DATA.remove_primerID_collisions(minCoverage, nonAmbigFrac, false);
+	DATA.remove_primerID_collisions(minCoverage, nonAmbigFrac, true);
 	
+	/*
 	// 4.) calculate statistics
 	std::cout << "4. Performing statistics\n";
 	DATA.estimate_RT_substitution_rate(true);
@@ -130,6 +131,7 @@ int main(int argc, char *argv[])
 	DATA.estimate_effective_RNA_number(true);
 	
 	DATA.display_raw_and_primerID_counts();
+	*/
 	
 	return EXIT_SUCCESS;
 }
