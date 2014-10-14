@@ -33,6 +33,9 @@ then
 	rm -rf m4/lt~obsolete.m4
 	rm -rf missing
 	rm -rf stamp-h1
+	rm -rf LogLik.R
+	rm -rf LogLik.pdf
+	rm -rf LogLik.Rout
 
 	# ./src
 	rm -rf src/.deps/
