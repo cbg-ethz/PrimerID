@@ -1,15 +1,9 @@
 #ifndef _PROB_CYCLE_HPP_
 #define _PROB_CYCLE_HPP_
 
-// #include <iostream>
-// #include <iomanip>
-
 #include <cmath>
 #include <tuple>
 #include <map>
-
-// #include <gsl/gsl_randist.h>
-// #include <gsl/gsl_cdf.h>
 
 #include <boost/math/distributions/binomial.hpp>
 
@@ -75,7 +69,10 @@ double prob_cycle::operator()(int no_mt, int no_total, int no_min, int cycle) co
 
 static prob_cycle PCR_prob;
 
-#ifdef UNIT_TEST
+/*
+#include <iostream>
+#include <iomanip>
+
 int main()
 {
   int min = 2;
@@ -120,7 +117,6 @@ int main()
 
   return 0;
 }
-
-#endif /*  UNIT_TEST */
+*/
 
 #endif /* _PROB_CYCLE_HPP_ */

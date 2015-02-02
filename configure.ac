@@ -103,15 +103,22 @@ AX_CXX_COMPILE_STDCXX_11([], [mandatory])
 dnl ===================
 dnl Initialise Automake
 dnl ===================
-AM_INIT_AUTOMAKE([1.14 foreign dist-bzip2 no-dist-gzip])
+AM_INIT_AUTOMAKE([1.14 foreign dist-bzip2 no-dist-gzip subdir-objects])
 AM_MAINTAINER_MODE([enable])
+
+
+
+dnl =============
+dnl Check for GSL
+dnl =============
+PKG_CHECK_MODULES([GSL], [gsl])
 
 
 
 dnl ========
 dnl Finalise
 dnl ========
-AC_CONFIG_FILES([Makefile src/Makefile])
+AC_CONFIG_FILES([Makefile])
 AC_OUTPUT
 
 

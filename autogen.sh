@@ -36,6 +36,8 @@ then
 	rm -rf LogLik.R
 	rm -rf LogLik.pdf
 	rm -rf LogLik.Rout
+	rm -rf .RData
+	rm -rf .Rapp.history
 
 	# ./src
 	rm -rf src/.deps/

@@ -4,12 +4,13 @@
 #include <vector>
 #include <string>
 
-#include <reference.hpp>
+#include <src/reference.hpp>
 
 struct proper_read
 {
   // reference stuff
-  const reference& _ref;
+  const reference&   _ref;
+	const std::string& _fullRead;
 
   int best_reference;
   int hamming_distance_to_best_reference;
@@ -18,32 +19,34 @@ struct proper_read
   int no_of_valid_heterozygous_bases;
 
   /* actual sequence data */
-  std::string fullRead;
-
   // heterozygous
   std::string heterozygous_loci_string;
   // std::vector<int> indices_valid_heterozygous;
 
   // homozygous
-  std::string homozygous_loci_string;
+  //std::string homozygous_loci_string;
 
   /* member functions*/
-  proper_read(const std::string& input, const reference& _reference);
+  proper_read(const std::string& strDNA, const reference& _reference);
 
-  std::tuple<uint64_t, uint64_t, uint64_t> calculate_homozygous_mismatches() const;
-  std::tuple<uint64_t, uint64_t, uint64_t> hetero_hamming_distance(const std::string& other_string) const;
-  std::tuple<uint64_t, uint64_t, uint64_t> hetero_hamming_distance(const proper_read& other_read) const;
+  //hamming_return_type calculate_homozygous_mismatches() const;
+  hamming_return_type hetero_hamming_distance(const std::string& other_string) const;
+  hamming_return_type hetero_hamming_distance(const proper_read& other_read) const;
 };
 
 struct consensus_read : public proper_read
 {
+	const std::string  _fullConsensus;
+	int multiplicity;
+	
   using proper_read::proper_read;
-  consensus_read(const std::string& input, const reference& _reference, int _multiplicity);
+  consensus_read(std::string&& input, const reference& _reference, int _multiplicity);
+	
+	hamming_return_type calculate_homozygous_mismatches() const;
 
   // s:  substitution rate
   // r: recombination rate
   double log_prob(double s, double r) const;
-  int multiplicity;
 };
 
 #endif /* _PROPER_READ_HPP_ */

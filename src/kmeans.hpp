@@ -67,7 +67,7 @@ void call_consensus(const std::vector<proper_read>& reads,
   std::map<char, int> current_loci;
   ranked_DNA_list ranks;
 
-  for (int i = 0; i < reads[0]._ref.no_heterozygous_loci; ++i)
+  for (int i : reads[0]._ref.heterozygous_loci)
   {
     current_loci = {
       { 'A', 0 }, { 'C', 0 }, { 'G', 0 }, { 'T', 0 }, { 'N', 0 }
@@ -75,7 +75,7 @@ void call_consensus(const std::vector<proper_read>& reads,
 
     for (int j : indices)
     {
-      ++current_loci[reads[j].heterozygous_loci_string[i]];
+      ++current_loci[reads[j]._fullRead[i]];
     }
 
     ranks(current_loci);
@@ -92,14 +92,14 @@ void call_consensus(const std::vector<proper_read>& reads,
   }
 }
 
-void call_consensus(const std::vector<const proper_read*>& reads,
+void call_consensus(const std::vector<proper_read*>& reads,
                     std::string& new_consensus)
 {
   new_consensus.clear();
   std::map<char, int> current_loci;
   ranked_DNA_list ranks;
 
-  for (int i = 0; i < reads[0]->_ref.no_heterozygous_loci; ++i)
+	for (int i : reads[0]->_ref.heterozygous_loci)
   {
     current_loci = {
       { 'A', 0 }, { 'C', 0 }, { 'G', 0 }, { 'T', 0 }, { 'N', 0 }
@@ -107,7 +107,7 @@ void call_consensus(const std::vector<const proper_read*>& reads,
 
     for (auto j : reads)
     {
-      ++current_loci[j->heterozygous_loci_string[i]];
+      ++current_loci[j->_fullRead[i]];
     }
 
     ranks(current_loci);
@@ -124,7 +124,7 @@ void call_consensus(const std::vector<const proper_read*>& reads,
   }
 }
 
-void call_full_consensus(const std::vector<const proper_read*>& reads,
+void call_full_consensus(const std::vector<proper_read*>& reads,
                          std::string& new_consensus, double minMajorFraction)
 {
   new_consensus.assign(reads[0]->_ref.genome_length, 'N');
@@ -139,7 +139,7 @@ void call_full_consensus(const std::vector<const proper_read*>& reads,
 
     for (auto j : reads)
     {
-      ++current_loci[j->fullRead[i]];
+      ++current_loci[j->_fullRead[i]];
     }
 
     ranks(current_loci);
@@ -169,14 +169,13 @@ public:
 
   int _inter_cluster_ham;
 
-  std::vector<const proper_read*> _cluster1;
-  std::vector<const proper_read*> _cluster2;
+  std::vector<proper_read*> _cluster1;
+  std::vector<proper_read*> _cluster2;
 
   const static int max_hamming = 1;
 
   // functor
-  void operator()(const std::vector<proper_read>& reads,
-                  double minMajorFraction)
+  void operator()(std::vector<proper_read>& reads, double minMajorFraction)
   {
     _n = reads.size();
 
@@ -190,7 +189,7 @@ public:
       {
         std::tie(mismatches, valid_trials, Ns) = reads[i].hetero_hamming_distance(reads[j]);
 
-        if ((mismatches <= max_hamming) && (Ns < 3))
+        if ((mismatches <= max_hamming)/* && (Ns < 3)*/)
         {
           boost::add_edge(i, j, G);
         }
@@ -222,9 +221,18 @@ public:
 
     if (comp_sizes.size() == 1)
     {
+			// only one connected component, definitely no collision
       _size2 = 0;
       _inter_cluster_ham = 0;
       _c_mean2.clear();
+			
+			// copy all reads into pointers
+			_cluster1.clear();
+			for (int i = 0; i < _n; ++i)
+			{
+				_cluster1.push_back(&reads[i]);
+			}
+			
       return;
     }
     else
@@ -232,10 +240,31 @@ public:
       _size2 = comp_sizes[1].second.size();
       call_consensus(reads, comp_sizes[1].second, _c_mean2);
     }
+		
+		/*
+		if (reads.size() == 93)
+		{
+			for(int i = 0; i < comp_sizes.size(); ++i)
+			{
+				std::cout << comp_sizes[i].first << '\n';
+				
+				for(const auto& j : comp_sizes[i].second)
+				{
+					std::cout << reads[j].heterozygous_loci_string << '\n';
+				}
+				
+				std::cout << '\n' << '\n';
+			}
+		}
+		*/
+		
+		//std::cout << "Number reads: " << reads.size() << '\n';
+		//std::cout << "S1:\t" << _size1 << '\t' << _c_mean1 << '\n';
+		//std::cout << "S2:\t" << _size2 << '\t' << _c_mean2 << '\n';
 
     // 5.) perform k-means clustering
     int dist1, dist2;
-    for (int i = 0; i < 2; ++i)
+    for (int i = 0; i <= 3; ++i)
     {
       _cluster1.clear();
       _cluster2.clear();
@@ -253,6 +282,16 @@ public:
 
       _size1 = _cluster1.size();
       _size2 = _cluster2.size();
+			
+			/*
+			if (reads.size() == 93)
+			{
+				std::cout << "S1:\t" << _size1 << '\t' << _c_mean1 << '\n';
+				std::cout << "S2:\t" << _size2 << '\t' << _c_mean2 << '\n';
+				std::cout << '\n';
+			}
+			*/
+			
       call_consensus(_cluster1, _c_mean1);
       call_consensus(_cluster2, _c_mean2);
     }

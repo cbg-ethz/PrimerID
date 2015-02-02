@@ -1,15 +1,18 @@
 #include <iostream>
 #include <iomanip>
 #include <fstream>
+#include <cstddef>
 
-#include <alignment.hpp>
+#include <src/alignment.hpp>
+
 #include <boost/algorithm/string.hpp>
 #include <boost/math/tools/minima.hpp>
 #include <boost/math/tools/roots.hpp>
+#include <gsl/gsl_randist.h>
 
 // custom functors
-#include <prob_cycle.hpp>
-#include <kmeans.hpp>
+#include <src/prob_cycle.hpp>
+#include <src/kmeans.hpp>
 
 // alignment
 struct SAMentry
@@ -48,24 +51,28 @@ struct SAMentry
 typedef std::pair<std::string, std::pair<SAMentry, SAMentry>> raw_sequence_pair;
 typedef std::map<std::string, std::pair<SAMentry, SAMentry>> raw_sequence_pairs;
 
-bool construct_sequence(const SAMentry& READ, std::string& DNA, std::string& PrimerID, const reference& ref)
+void construct_sequence(const SAMentry& READ, std::string& DNA, const reference& ref, std::string& PrimerID, int& no_inserts, int& no_dels, int& len_overhang)
 {
   const std::string& read_sequence = READ.SEQ;
   const std::string& CIGAR = READ.CIGAR;
 
+	// current position in CIGAR
   int curPos = 0;
+	
+	// current position in READ
   int curOffset = 0;
+	
+	// current position on GENOME
   int offsetRef = READ.POS;
+	
+	// current length of stretch in READ
   int curLen;
-  int lengthPID = 0;
-
-  bool valid = true;
-
+	
+  no_inserts = 0;
   DNA.clear();
-  PrimerID.clear();
 
   // 1.) tokenize CIGAR
-  for (int i = 0; i < CIGAR.length(); ++i)
+  for (size_t i = 0; i < CIGAR.length(); ++i)
   {
     if (isalpha(CIGAR[i]))
     {
@@ -88,8 +95,7 @@ bool construct_sequence(const SAMentry& READ, std::string& DNA, std::string& Pri
       case 'I':
         if (offsetRef == ref.PID_start)
         {
-          valid = false;
-          lengthPID += curLen;
+          no_inserts += curLen;
         }
 
         curOffset += curLen;
@@ -102,43 +108,48 @@ bool construct_sequence(const SAMentry& READ, std::string& DNA, std::string& Pri
     }
   }
 
-  // 2.) check all strings
-  if (READ.POS > 260)
-  {
-    // right sequence
-    if (offsetRef - ref.overhang_start >= ref.overhang_min_length)
-    {
-      // overhang is good
-      PrimerID = DNA.substr(ref.PID_start - READ.POS, ref.PID_length);
-      lengthPID += std::count(PrimerID.begin(), PrimerID.end(), 'N');
-
-      if (lengthPID > 0)
-      {
-        // contains some N's, PrimerID shorter than 10 nucleotides
-        valid = false;
-      }
-    }
-    else
-    {
-      // overhang too short
-      valid = false;
-    }
-
-    if (READ.POS + DNA.length() > ref.replace_start)
+	// 2.) calculate statistics for reads
+	if (READ.POS > 270)
+	{
+		// right read
+		if (offsetRef > ref.PID_start)
+		{
+			// has a pID
+			PrimerID = DNA.substr(ref.PID_start - READ.POS, ref.PID_length);
+			no_dels = std::count(PrimerID.begin(), PrimerID.end(), 'N');
+		}
+		else
+		{
+			// has no pID
+			PrimerID.clear();
+			no_dels = 0;
+		}
+		
+		//std::cout << std::string(READ.POS-1, ' ') << DNA << '\n';
+		
+		len_overhang = std::max(offsetRef - ref.overhang_start, 0);
+		
+    if (offsetRef > ref.replace_start)
       DNA.erase(ref.replace_start - READ.POS);
 
     DNA.append(ref.PID_start - READ.POS - DNA.length(), 'N');
-  }
-
-  return valid;
+	}
+	else
+	{
+		// left read
+		no_inserts = 0;
+		no_dels = 0;
+		len_overhang = 0;
+		PrimerID.clear();
+	}
 }
 
 void merge_reads(const std::string& left_Read, const std::string& right_Read, int left_start, int right_start, const reference& ref, std::string& new_final_read)
 {
-  int global_start, global_end;
+  //int global_start, global_end;
 
-  global_start = left_start;
-  global_end = right_start + right_Read.length();
+  //global_start = left_start;
+  //global_end = right_start + right_Read.length();
 
   new_final_read.clear();
   new_final_read.append(std::max(left_start - 1, 0), 'N');
@@ -149,11 +160,14 @@ void merge_reads(const std::string& left_Read, const std::string& right_Read, in
 }
 
 alignment::alignment(const std::string& fileName)
-    : input_fileName(fileName)
+: _histogram_of_primerID_lengths(500, 0),
+	_pid_stats(10),
+	input_fileName(fileName)
 {
-  int slash_pos = input_fileName.find_last_of('/');
+  size_t slash_pos = input_fileName.find_last_of('/');
   slash_pos = (slash_pos == std::string::npos ? 0 : slash_pos + 1);
   just_fileName = input_fileName.substr(slash_pos);
+	fileStem = just_fileName.substr(0, just_fileName.find(".sam"));
 
   if (input_fileName.find("3223") != std::string::npos)
     this->_reference = ref3223;
@@ -224,7 +238,7 @@ alignment::alignment(const std::string& fileName)
             SplitVec[10]);
 
         // swap elements such that first element is left sequence and second element is right sequence
-        if (it->second.first.POS > 260)
+        if (it->second.first.POS > it->second.second.POS)
         {
           std::swap(it->second.first, it->second.second);
         }
@@ -236,66 +250,85 @@ alignment::alignment(const std::string& fileName)
     std::cout << fileName << " is not readable!\n";
     exit(EXIT_FAILURE);
   }
-
   input.close();
 
-  // 2.) convert raw SAM data to proper sequencing reads
-  int accepted = 0;
-
-  std::string primerID;
+  // 2.) convert raw SAM data to merged reads
+	_raw_reads.reserve(sam_data.size());
+	
+	std::string primerID;
   std::string leftRead, rightRead;
   std::string temp_final_read;
-  std::pair<std::map<std::string, std::vector<proper_read>>::iterator, bool> insert_it;
-  bool valid;
-
+	
+	int no_inserts, no_dels, len_overhang;
+	int len_pID;
+		
   for (const auto& i : sam_data)
-  {
+  {	
     // 1.) check whether reads have a matching mate
     if ((i.second.second.SEQ.length() == 0) || (i.second.first.SEQ.length() == 0))
       continue;
+		
+		// DEBUG
+		//std::cout << std::string(i.second.second.POS - 1, ' ') << i.second.second.SEQ << '\n'; 
 
-    // 2.) parse left and right read and check whether primerID is valid
-    construct_sequence(i.second.first, leftRead, primerID, _reference);
-    valid = construct_sequence(i.second.second, rightRead, primerID, _reference);
+    // 2.) parse left and right read
+		construct_sequence(i.second.first,  leftRead,  _reference, primerID, no_inserts, no_dels, len_overhang); // left
+		construct_sequence(i.second.second, rightRead, _reference, primerID, no_inserts, no_dels, len_overhang); // right
 
     // 3.) merge left and right read
     merge_reads(leftRead, rightRead, i.second.first.POS, i.second.second.POS, _reference, temp_final_read);
 
-    _reference.assign_counts(temp_final_read);
+		// 4.) add to primerID length histogram
+		len_pID = std::max(static_cast<int>(primerID.length()) + no_inserts - no_dels, 0);
+		++_histogram_of_primerID_lengths[len_pID];
+		
+		// DEBUG
+		//std::cout << temp_final_read << '\n';
+		//std::cout << std::string(_reference.PID_start-1, ' ') << primerID << '\t' << len_pID << '\t' << len_overhang << '\n' << '\n';
+		
+		_raw_reads.emplace_back(std::move(temp_final_read), std::move(primerID), no_inserts, no_dels, len_overhang, len_pID);
+  }
 
+  std::cout << input_fileName << ": " << sam_data.size() << " unique read identifiers\n"
+						<< std::string(input_fileName.length(), ' ') << "  " << _raw_reads.size() << " properly paired (" << std::fixed << std::setprecision(1) << static_cast<double>(_raw_reads.size()) / sam_data.size()*100 << "%)\n";
+}
+
+void alignment::filtering_QA()
+{
+	bool valid;
+  int accepted = 0;
+	std::pair<std::map<std::string, std::vector<proper_read>>::iterator, bool> insert_it;
+
+	//_pid_stats.show_statistics();
+
+	// 1.) perform initial QA
+  for (const auto& i : _raw_reads)
+  {
+    _reference.assign_counts(i.DNA);
+		++_histogram_of_primerID_lengths[i.len_pID];
+		
+		valid = ((i.len_pID == 10) && (i.no_inserts == 0) && (i.no_dels == 0) && (i.len_overhang >= _reference.overhang_min_length));
     if (!(valid))
       continue;
 
-    // 4.) add to map
-    insert_it = raw_primerID_map.emplace(primerID, std::vector<proper_read>());
-    insert_it.first->second.emplace_back(temp_final_read, _reference);
-    ++accepted;
+    // add to map
+    insert_it = raw_primerID_map.emplace(i.PrimerID, std::vector<proper_read>());
+    insert_it.first->second.emplace_back(i.DNA, _reference);
   }
-
-  std::cout << input_fileName << ": " << sam_data.size() << " pairs, " << accepted << " passed initial QA (" << std::fixed << std::setprecision(1) << static_cast<double>(accepted) / sam_data.size() * 100 << "%)\n";
-}
-
-/*
-void __verbose(const std::string& PrimerID, const std::vector<proper_read>& reads, int valid_reads)
-{
-	std::cout << PrimerID << " (" << reads.size() << ", valid: " << valid_reads << ") - \n";
-	for (const proper_read& i : reads)
+	
+	// 2.) calculate stats for MOTIF
+	for (const auto& i : raw_primerID_map)
 	{
-		std::cout << i.heterozygous_loci_string;
-		std::cout << '\t';
-		if (i.hamming_distance_to_best_reference >= 2)
-			std::cout << "RECOMBINANT";
-		else
-			std::cout << i._ref.all_reference_strains[i.best_reference].name;
-
-		std::cout << " (" << i.hamming_distance_to_best_reference << " / " << i.no_of_valid_heterozygous_bases << ")\n";
+		_pid_stats.addPrimer(i.first, i.second.size());
+		accepted += i.second.size();
 	}
+	
+	//_pid_stats.show_statistics();
 
-	std::cout << "\n";
+  std::cout << input_fileName << ": " << accepted << " passed QA (" << std::fixed << std::setprecision(1) << static_cast<double>(accepted) / _raw_reads.size()*100 << "%)\n";
 }
-*/
 
-std::string alignment::call_consensus_and_remove_collisions(const std::vector<proper_read>& reads, int minDisplay, const std::string& PrimerID)
+std::string alignment::call_consensus_and_remove_collisions(std::vector<proper_read>& reads, int minDisplay, const std::string& PrimerID, std::vector<proper_read*>& filtered_reads)
 {
   static kmeans clustering;
 
@@ -314,6 +347,17 @@ std::string alignment::call_consensus_and_remove_collisions(const std::vector<pr
   else
   {
     // no collision
+		if (clustering._cluster1.size() < _min_current_coverage)
+		{
+	    // indecisive - coverage too low
+	    return std::string("1");
+		}
+		else
+		{
+			// 1st and largest cluster has acceptable size
+			filtered_reads = clustering._cluster1;
+		}
+		
     return clustering._full_consensus1;
   }
 }
@@ -332,16 +376,21 @@ void alignment::remove_primerID_collisions(int minC, double minMajorFraction, bo
   consensus_primerID_map.clear();
 
   std::pair<std::map<std::string, consensus_read>::iterator, bool> it;
+	std::pair<std::map<std::string, int>::iterator, bool> insert_it;
+	std::vector<proper_read*> tmp;
 
   for (auto& i : raw_primerID_map)
   {
-    consensus = call_consensus_and_remove_collisions(i.second, minDisplay, i.first);
+    consensus = call_consensus_and_remove_collisions(i.second, minDisplay, i.first, tmp);
 
     switch (consensus[0])
     {
     case '0':
       // collision
       ++number_collisions;
+			
+			// make RNA primerID count pileup
+			//primerID_RT_histogram[i.first] += 1;
       break;
 
     case '1':
@@ -352,13 +401,17 @@ void alignment::remove_primerID_collisions(int minC, double minMajorFraction, bo
     default:
       // OK, proper consensus
       ++number_singletons;
+			
+			// make RNA primerID count pileup
+	    //++primerID_RT_histogram[i.first];
 
       _reference.assign_counts(consensus, true);
+			//std::cout << i.first << '\t' << consensus << '\n';
 
-      collision_free_primerID_map.emplace(i.first, &(i.second));
+      collision_free_primerID_map.emplace(i.first, tmp);
       it = consensus_primerID_map.emplace(std::piecewise_construct,
                                           std::forward_as_tuple(i.first),
-                                          std::forward_as_tuple(consensus, _reference, i.second.size()));
+                                          std::forward_as_tuple(std::move(consensus), _reference, tmp.size()));
       break;
     }
   }
@@ -373,7 +426,7 @@ void alignment::remove_primerID_collisions(int minC, double minMajorFraction, bo
   }
 }
 
-void alignment::show_primerIDs_with_min_coverage(int minC) const
+void alignment::show_primerIDs_with_min_coverage(size_t minC) const
 {
   for (const auto& i : raw_primerID_map)
   {
@@ -381,21 +434,25 @@ void alignment::show_primerIDs_with_min_coverage(int minC) const
     {
       std::cout << i.first << '\n' << std::string(10, '-') << '\n';
       for (const auto& j : i.second)
-        std::cout << j.heterozygous_loci_string << '\n';
-
-      std::cout << '\n';
+			{
+				for (auto k : j._ref.heterozygous_loci)
+				{
+					std::cout << j._fullRead[k];
+				}
+			}
+      std::cout << "\n\n";
     }
   }
 }
 
-std::tuple<uint64_t, uint64_t, uint64_t> alignment::calculate_RT_mismatches() const
+hamming_return_type alignment::calculate_RT_mismatches() const
 {
   int mismatches = 0;
   int valid_trials = 0;
   int Ns = 0;
-  std::tuple<uint64_t, uint64_t, uint64_t> temp;
+  hamming_return_type temp;
 
-  for (const std::pair<const std::string, consensus_read>& i : consensus_primerID_map)
+  for (const auto& i : consensus_primerID_map)
   {
     temp = i.second.calculate_homozygous_mismatches();
 
@@ -404,7 +461,7 @@ std::tuple<uint64_t, uint64_t, uint64_t> alignment::calculate_RT_mismatches() co
     Ns += std::get<2>(temp);
   }
 
-  return std::tuple<uint64_t, uint64_t, uint64_t>(mismatches, valid_trials, Ns);
+  return hamming_return_type(mismatches, valid_trials, Ns);
 }
 
 double alignment::LogLik(double s, double r) const
@@ -442,7 +499,7 @@ double alignment::LogLik(double s, double r) const
   return total_likelihood;
 }
 
-std::tuple<double, uint64_t, uint64_t> alignment::calculate_PCR_mismatches() const
+d_hamming_return_type alignment::calculate_PCR_mismatches() const
 {
   double mismatches = 0;
   uint64_t trials = 0;
@@ -458,19 +515,19 @@ std::tuple<double, uint64_t, uint64_t> alignment::calculate_PCR_mismatches() con
   ranked_DNA_list ranker;
   double p;
 
-  for (std::map<std::string, std::vector<proper_read>*>::const_iterator i = collision_free_primerID_map.begin(); i != collision_free_primerID_map.end(); ++i)
+  for (const auto& i : collision_free_primerID_map)
   {
-    cov = i->second->size();
+    cov = i.second.size();
     // PCRerror = false;
 
-    for (int j = 0; j < _reference.no_homozygous_loci; ++j)
+    for (int j : _reference.homozygous_loci)
     {
       // 1.) perform pileup
       current_loci = { { 'A', 0 }, { 'C', 0 }, { 'G', 0 }, { 'T', 0 }, { 'N', 0 } };
 
       for (int k = 0; k < cov; ++k)
       {
-        ++current_loci[(*(i->second))[k].homozygous_loci_string[j]];
+        ++current_loci[(i.second[k])->_fullRead[j]];
       }
 
       // 2.) perform ranking
@@ -510,7 +567,7 @@ std::tuple<double, uint64_t, uint64_t> alignment::calculate_PCR_mismatches() con
 		 */
   }
 
-  return std::tuple<double, uint64_t, uint64_t>(mismatches, trials, numberN);
+  return d_hamming_return_type(mismatches, trials, numberN);
 }
 
 void alignment::calculate_effective_RNA_number() const
@@ -533,10 +590,10 @@ void alignment::show_recombination_patterns() const
       {
         std::cout << j.name << '\t';
 
-        for (int k = 0; k < i.second._ref.no_heterozygous_loci; ++k)
+        for (int k : i.second._ref.heterozygous_loci)
         {
-          if ((i.second.heterozygous_loci_string[k] == 'N') || (i.second.heterozygous_loci_string[k] == j.heterozygous_loci_string[k]))
-            std::cout << i.second.heterozygous_loci_string[k];
+          if ((i.second._fullRead[k] == 'N') || (i.second._fullRead[k] == j.heterozygous_loci_string[k]))
+            std::cout << i.second._fullRead[k];
           else
             std::cout << ' ';
         }
@@ -577,7 +634,7 @@ void alignment::write_consensus_to_fasta() const
   std::ofstream output(output_fileName.c_str());
   for (const auto& i : consensus_primerID_map)
   {
-    output << '>' << i.first << '_' << i.second.multiplicity << '_' << (i.second.best_reference == i.second._ref.K ? "RECOMB" : i.second._ref.all_reference_strains[i.second.best_reference].name) << '_' << i.second.hamming_distance_to_best_reference << '\n' << i.second.fullRead << '\n';
+    output << '>' << i.first << '_' << i.second.multiplicity << '_' << (i.second.best_reference == i.second._ref.K ? "RECOMB" : i.second._ref.all_reference_strains[i.second.best_reference].name) << '_' << i.second.hamming_distance_to_best_reference << '\n' << i.second._fullRead << '\n';
   }
 
   output.close();
@@ -594,10 +651,10 @@ void alignment::write_to_fasta() const
   for (const auto& i : collision_free_primerID_map)
   {
     int k = 0;
-    for (const proper_read& j : *(i.second))
+    for (const auto& j : i.second)
     {
       ++k;
-      output << '>' << i.first << '_' << k << '\n' << j.fullRead << '\n';
+      output << '>' << i.first << '_' << k << '\n' << j->_fullRead << '\n';
     }
   }
 
@@ -618,7 +675,7 @@ void alignment::write_raw_to_fasta() const
     for (const proper_read& j : i.second)
     {
       ++k;
-      output << '>' << i.first << '_' << k << '\n' << j.fullRead << '\n';
+      output << '>' << i.first << '_' << k << '\n' << j._fullRead << '\n';
     }
   }
 
@@ -627,7 +684,7 @@ void alignment::write_raw_to_fasta() const
 
 // alignments
 alignments::alignments(const std::vector<std::string>& inputFiles)
-    : _n(inputFiles.size()), _min_current_coverage(-1), _min_majority_fraction(-1), is_collisions_removed(false)
+    : _n(inputFiles.size()), _min_current_coverage(-1), _min_majority_fraction(-1), is_collisions_removed(false), _pid_stats(10)
 {
   collections_alignments.reserve(_n);
 
@@ -635,6 +692,14 @@ alignments::alignments(const std::vector<std::string>& inputFiles)
   {
     std::cout << "Loading " << i << '\n';
     collections_alignments.emplace_back(i);
+  }
+}
+
+void alignments::filtering_QA()
+{
+  for (alignment& i : collections_alignments)
+  {
+    i.filtering_QA();
   }
 }
 
@@ -655,7 +720,7 @@ double alignments::estimate_RT_substitution_rate(bool report)
   uint64_t mismatches = 0;
   uint64_t valid_trials = 0;
   uint64_t Ns = 0;
-  std::tuple<uint64_t, uint64_t, uint64_t> temp;
+  hamming_return_type temp;
 
   for (const alignment& i : collections_alignments)
   {
@@ -776,7 +841,7 @@ double alignments::estimate_PCR_substitution_rate(bool report)
   double mismatches = 0;
   uint64_t valid_trials = 0;
   uint64_t Ns = 0;
-  std::tuple<double, uint64_t, uint64_t> temp;
+  d_hamming_return_type temp;
 
   for (const alignment& i : collections_alignments)
   {
@@ -828,6 +893,109 @@ void alignments::display_raw_and_primerID_counts() const
 
   std::cout << std::string(50, '=') << '\n';
 }
+
+/* *** RT bias *** */
+void alignments::write_prob_to_csv()
+{
+	_pid_stats.reset();
+	
+  for (const alignment& i : collections_alignments)
+  {
+    _pid_stats.mergestatistics(i._pid_stats);
+		i._pid_stats.write_to_csv(i.just_fileName);
+		
+		i._pid_stats.calculate_comprehensive_statistics(i.fileStem);
+  }
+	
+	_pid_stats.write_to_csv("Total");
+	_pid_stats.calculate_comprehensive_statistics("Total");
+}
+
+/*
+void alignments::write_out_script_RT_bias_test() const
+{
+	std::ofstream Routput("EMT.R");
+	
+	// 1.) write header
+	Routput << "require(\"EMT\")\n";
+	Routput << "p = rep(1, " << 1048576 << ")/" << 1048576 << "\n\n";
+	
+	// 2.) sum up data of all experiments
+	DNAvector<unsigned int> sum(10);
+  for (const alignment& i : collections_alignments)
+  {
+		for (int j = 0; j < i.primerID_RT_histogram._n; ++j)
+		{
+			sum[j] += i.primerID_RT_histogram[j];
+		}
+  }
+	
+	// 3.) then write data to script
+	Routput << "DATA = c(" << sum[0];
+	for (int j = 1; j < 1048576; ++j)
+	{
+		Routput << ", " << sum[j];
+	}
+	Routput << ")\n\n";
+	
+	// 4.) then perform EMT
+  Routput << "multinomial.test(DATA, p, MonteCarlo=TRUE, ntrial=1E6)\n";
+	
+	Routput.close();
+}
+*/
+
+/*
+double alignments::calculate_RT_bias_pvalue() const
+{
+	int K = 1048576;
+	unsigned int Nsum = 0;
+	
+	// 1.) sum up data of all experiments first
+	DNAvector<unsigned int> sum(10);
+  for (const alignment& i : collections_alignments)
+  {
+		int DOUBLES = 0;
+		for (int j = 0; j < i.primerID_RT_histogram._n; ++j)
+		{
+			sum[j] += i.primerID_RT_histogram[j];
+			Nsum   += i.primerID_RT_histogram[j];
+			DOUBLES += (i.primerID_RT_histogram[j] >= 2);
+		}
+		std::cout << i.just_fileName << ": " << DOUBLES << '\n';
+  }
+	
+	// 2.) perform Monte Carlo simulations
+	gsl_rng* r = gsl_rng_alloc(gsl_rng_mt19937);
+	std::vector<double> p_i(K, 1.0/K);
+	std::vector<unsigned int> X(K);
+	
+	double lnP_DATA = gsl_ran_multinomial_lnpdf(K, p_i.data(), sum.data());
+	double lnP_X;
+	int no_as_extreme = 0;
+	int Ntrials = 1000;
+	
+	std::cout << std::fixed << "Calculating p-Value with\n";
+	std::cout << "Number trials: " << Ntrials << '\n';
+	std::cout << "N_sum:         " << Nsum << '\n';
+	std::cout << "lnP(DATA):     " << lnP_DATA << '\n';
+	
+	for (int i = 0; i < Ntrials; ++i)
+	{
+		gsl_ran_multinomial(r, K, Nsum, p_i.data(), X.data());
+		lnP_X = gsl_ran_multinomial_lnpdf(K, p_i.data(), X.data());
+		
+		std::cout << i+1 << ":\t" << lnP_X << '\n';
+		
+		no_as_extreme += (lnP_X <= lnP_DATA);
+	}
+	std::cout << '\n';
+	std::cout << "p-Value: " << static_cast<double>(no_as_extreme)/Ntrials << '\n';
+	
+	gsl_rng_free(r);
+	return static_cast<double>(no_as_extreme)/Ntrials;
+}
+*/
 
 /* *** chao estimator *** */
 void alignments::estimate_effective_RNA_number(bool report) const
@@ -923,13 +1091,13 @@ void alignments::plot_RT_recombination_LogLik(double lower, int n) const
   std::ofstream Routput("LogLik.R");
 
   Routput << "x = c(" << std::scientific << std::setprecision(4) << x[0];
-  for (int i = 1; i < x.size(); ++i)
+  for (size_t i = 1; i < x.size(); ++i)
     Routput << ", " << x[i];
 
   Routput << ")\n";
 
   Routput << "y = c(" << std::fixed << std::setprecision(4) << y[0];
-  for (int i = 1; i < y.size(); ++i)
+  for (size_t i = 1; i < y.size(); ++i)
     Routput << ", " << y[i];
 
   Routput << ")\n\n";
@@ -963,27 +1131,35 @@ void alignments::plot_RT_recombination_LogLik(double lower, int n) const
   Routput << "X_CI_HIGH = " << std::scientific << std::setprecision(4) << _RT_recomb_rate_CI_upper << "\n";
   Routput << "r = " << std::scientific << std::setprecision(2) << _RT_recomb_rate << "\n";
   Routput << "\n";
-  Routput << "MIDP = sqrt(X_CI_LOW*X_CI_HIGH)\n";
-  Routput << "\n";
-  Routput << "segments(X_CI_LOW, YMIN, X_CI_LOW, LOGLIKMAX)\n";
-  Routput << "segments(X_CI_HIGH, YMIN, X_CI_HIGH, LOGLIKMAX)\n";
-  Routput << "\n";
-  Routput << "segments(r, YMIN, r, YMIN + 0.93*(LOGLIKMAX-YMIN), lty=3)\n";
-  Routput << "segments(r, YMIN + 0.97*(LOGLIKMAX-YMIN), r, YMIN + 1.05*(LOGLIKMAX-YMIN), lty=3)\n";
-  Routput << "\n";
-  Routput << "EXP = floor(log10(r))\n";
-  Routput << "BASE = signif(r, 3) / 10^EXP\n";
-  Routput << "\n";
-  Routput << "text(r, YMIN + 1.05*(LOGLIKMAX-YMIN), bquote(hat(italic(r)) == .(BASE) %*% 10^.(EXP)), pos = 3, cex = 1.0)\n";
-  Routput << "\n";
-  Routput << "arrows(X_CI_LOW, YMIN + 0.95*(LOGLIKMAX-YMIN), MIDP/1.28, YMIN + 0.95*(LOGLIKMAX-YMIN), code = 1, length = 0.07)\n";
-  Routput << "arrows(MIDP*1.28, YMIN + 0.95*(LOGLIKMAX-YMIN), X_CI_HIGH, YMIN + 0.95*(LOGLIKMAX-YMIN), code = 2, length = 0.07)\n";
-  Routput << "\n";
-  Routput << "text(x= MIDP, y=YMIN + 0.95*(LOGLIKMAX-YMIN), labels=\"95% CI\")\n";
-  Routput << "dev.off()\n";
-  Routput << "\n";
-  Routput << "embed_fonts(\"tmp.pdf\", outfile=\"LogLik.pdf\")\n";
-  Routput << "file.remove(\"tmp.pdf\")\n";
+	Routput << "lnX_CI_LOW = log(X_CI_LOW)\n";
+	Routput << "lnX_CI_HIGH = log(X_CI_HIGH)\n";
+	Routput << "lnMIDP = mean(c(lnX_CI_LOW, lnX_CI_HIGH))\n";
+	Routput << "MIDP = exp(lnMIDP)\n";
+	Routput << "\n";
+	Routput << "XSPAN = lnX_CI_HIGH - lnX_CI_LOW\n";
+	Routput << "ratio = 0.16\n";
+	Routput << "x_left = exp(lnX_CI_LOW + ratio*XSPAN)\n";
+	Routput << "x_right = exp(lnX_CI_LOW + (1-ratio)*XSPAN)\n";
+	Routput << "\n";
+	Routput << "segments(X_CI_LOW, YMIN, X_CI_LOW, LOGLIKMAX)\n";
+	Routput << "segments(X_CI_HIGH, YMIN, X_CI_HIGH, LOGLIKMAX)\n";
+	Routput << "\n";
+	Routput << "segments(r, YMIN, r, YMIN + 0.93*(LOGLIKMAX-YMIN), lty=3)\n";
+	Routput << "segments(r, YMIN + 0.97*(LOGLIKMAX-YMIN), r, YMIN + 1.05*(LOGLIKMAX-YMIN), lty=3)\n";
+	Routput << "\n";
+	Routput << "EXP = floor(log10(r))\n";
+	Routput << "BASE = signif(r, 3) / 10^EXP\n";
+	Routput << "\n";
+	Routput << "text(r, YMIN + 1.05*(LOGLIKMAX-YMIN), bquote(hat(italic(r)) == .(BASE) %*% 10^.(EXP)), pos = 3, cex = 1.0)\n";
+	Routput << "\n";
+	Routput << "arrows(X_CI_LOW, YMIN + 0.95*(LOGLIKMAX-YMIN), x_left, YMIN + 0.95*(LOGLIKMAX-YMIN), code = 1, length = 0.07)\n";
+	Routput << "arrows(x_right, YMIN + 0.95*(LOGLIKMAX-YMIN), X_CI_HIGH, YMIN + 0.95*(LOGLIKMAX-YMIN), code = 2, length = 0.07)\n";
+	Routput << "\n";
+	Routput << "text(x= MIDP, y=YMIN + 0.95*(LOGLIKMAX-YMIN), labels=\"95% CI\")\n";
+	Routput << "dev.off()\n";
+	Routput << "\n";
+	Routput << "embed_fonts(\"tmp.pdf\", outfile=\"LogLik.pdf\")\n";
+	Routput << "file.remove(\"tmp.pdf\")\n";
 
   Routput.close();
 }

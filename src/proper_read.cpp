@@ -3,7 +3,7 @@
 #include <functional>
 #include <exception>
 
-#include <proper_read.hpp>
+#include <src/proper_read.hpp>
 
 hamming_return_type
 hamming_distance(const std::string& sA, const std::string& sB)
@@ -15,7 +15,7 @@ hamming_distance(const std::string& sA, const std::string& sB)
   if (sA.length() != sB.length())
     throw std::range_error("String lengths do not match!\n");
 
-  for (int i = 0; i < sA.length(); ++i)
+  for (size_t i = 0; i < sA.length(); ++i)
   {
     if ((sA[i] != 'N') && (sB[i] != 'N'))
     {
@@ -26,27 +26,29 @@ hamming_distance(const std::string& sA, const std::string& sB)
       ++Ns;
   }
 
-  return std::tuple<uint64_t, uint64_t, uint64_t>(mismatches, valid_trials, Ns);
+  return hamming_return_type(mismatches, valid_trials, Ns);
 }
 
 // proper_read
-proper_read::proper_read(const std::string& input, const reference& _reference)
+proper_read::proper_read(const std::string& strDNA, const reference& _reference)
     : _ref(_reference),
-      no_N(0),
-      fullRead(input)
+			_fullRead(strDNA),
+      no_N(0)
 {
   // 1.) construct heterozygous string
   for (int i : _ref.heterozygous_loci)
   {
-    no_N += (fullRead[i] == 'N');
-    heterozygous_loci_string.push_back(fullRead[i]);
+    no_N += (_fullRead[i] == 'N');
+    heterozygous_loci_string.push_back(_fullRead[i]);
   }
 
   no_of_valid_heterozygous_bases = _ref.no_heterozygous_loci - no_N;
 
+	/*
   // 2.) construct homozygous string
   for (int i : _ref.homozygous_loci)
-    homozygous_loci_string.push_back(fullRead[i]);
+    homozygous_loci_string.push_back(_fullRead[i]);
+	*/
 
   // 3.) find closest reference strain
   int best_index = _ref.K;
@@ -83,6 +85,7 @@ proper_read::proper_read(const std::string& input, const reference& _reference)
   }
 }
 
+/*
 hamming_return_type
 proper_read::calculate_homozygous_mismatches() const
 {
@@ -90,19 +93,20 @@ proper_read::calculate_homozygous_mismatches() const
   int valid_trials = 0;
   int Ns = 0;
 
-  for (int i = 0; i < homozygous_loci_string.length(); ++i)
+  for (int i : _ref.homozygous_loci)
   {
-    if (homozygous_loci_string[i] != 'N')
+    if (_fullRead[i] != 'N')
     {
       ++valid_trials;
-      mismatches += (homozygous_loci_string[i] != _ref.homozygous_string[i]);
+      mismatches += (_fullRead[i] != _ref.all_reference_strains[0].DNA[i]);
     }
     else
       ++Ns;
   }
 
-  return std::tuple<uint64_t, uint64_t, uint64_t>(mismatches, valid_trials, Ns);
+  return hamming_return_type(mismatches, valid_trials, Ns);
 }
+*/
 
 hamming_return_type
 proper_read::hetero_hamming_distance(const std::string& other_string) const
@@ -117,11 +121,29 @@ proper_read::hetero_hamming_distance(const proper_read& other_read) const
 }
 
 // consensus_read
-consensus_read::consensus_read(const std::string& input,
-                               const reference& _reference, int _multiplicity)
-    : proper_read(input, _reference),
-      multiplicity(_multiplicity)
+consensus_read::consensus_read(std::string&& strDNA, const reference& _reference, int _multiplicity)
+	: proper_read(strDNA, _reference),
+		_fullConsensus(std::move(strDNA)),
+		multiplicity(_multiplicity) {}
+
+hamming_return_type consensus_read::calculate_homozygous_mismatches() const
 {
+  int mismatches = 0;
+  int valid_trials = 0;
+  int Ns = 0;
+
+  for (int i : _ref.homozygous_loci)
+  {
+    if (_fullConsensus[i] != 'N')
+    {
+      ++valid_trials;
+      mismatches += (_fullConsensus[i] != _ref.all_reference_strains[0].DNA[i]);
+    }
+    else
+      ++Ns;
+  }
+
+  return hamming_return_type(mismatches, valid_trials, Ns);
 }
 
 inline long double emission_probability(char X_i, char Z_i, long double s)
@@ -146,6 +168,7 @@ double consensus_read::log_prob(double s, double r) const
 {
   // performs the full HMM calculation for one sequence
   // FORWARD algorithm: P(X) = \sum_{Z} P(X, Z)
+	// complexity: O(L*K^2), i.e., approx 25*L
 
   // probability is a function of r, i.e. the likelihood
   // of this sequence can be used to make inference on r
@@ -159,12 +182,12 @@ double consensus_read::log_prob(double s, double r) const
 
   // 2.) recursion
   long double sum;
-  int jump;
+  int n_jump;
 
   for (int i = 1; i < _ref.no_heterozygous_loci; ++i)
   {
     f_new.swap(f_old);
-    jump = _ref.heterozygous_loci[i] - _ref.heterozygous_loci[i - 1];
+    n_jump = _ref.heterozygous_loci[i] - _ref.heterozygous_loci[i - 1];
 
     for (int j = 0; j < _ref.K; ++j)
     {
@@ -172,7 +195,7 @@ double consensus_read::log_prob(double s, double r) const
 
       for (int k = 0; k < _ref.K; ++k)
       {
-        sum += transition_probability(j, k, jump, r, _ref) * f_old[k];
+        sum += transition_probability(j, k, n_jump, r, _ref) * f_old[k];
       }
 
       f_new[j] = emission_probability(

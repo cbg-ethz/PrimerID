@@ -11,6 +11,8 @@ enum referenceType
 };
 
 typedef std::tuple<uint64_t, uint64_t, uint64_t> hamming_return_type;
+typedef std::tuple<double, uint64_t, uint64_t> d_hamming_return_type;
+
 hamming_return_type hamming_distance(const std::string& sA, const std::string& sB);
 
 struct record

@@ -3,8 +3,8 @@
 #include <cmath>
 #include <fstream>
 
-#include <reference.hpp>
-#include <alignment.hpp>
+#include <src/reference.hpp>
+#include <src/alignment.hpp>
 
 #include <getopt.h>
 static struct option long_options[] = {
@@ -114,27 +114,33 @@ int main(int argc, char* argv[])
   // 2.) load alignments
   std::cout << "2. Loading alignments\n";
   alignments DATA(inputFiles);
+	
 
-  // DATA.write_raw_to_fasta();
+  //DATA.write_raw_to_fasta();
 
   // 3.) process data
-  // std::cout << "3. Processing data\n";
+  std::cout << "3. Processing data\n";
+	DATA.filtering_QA();
+	
   DATA.remove_primerID_collisions(minCoverage, nonAmbigFrac, true);
   DATA.show_clone_frequencies();
 
   // 4.) calculate statistics
   std::cout << "4. Performing statistics\n";
 
-  DATA.estimate_RT_substitution_rate(true);
-  DATA.estimate_RT_recombination_rate(true);
-  DATA.estimate_PCR_substitution_rate(true);
+  //DATA.estimate_RT_substitution_rate(true);
+  //DATA.estimate_RT_recombination_rate(true);
+  //DATA.estimate_PCR_substitution_rate(true);
 
+	DATA.write_prob_to_csv();
+
+	/*
+	// DATA.calculate_RT_bias_pvalue();
   // DATA.estimate_effective_RNA_number(true);
   // DATA.show_recombination_patterns();
-
-  DATA.plot_RT_recombination_LogLik(5E-7, 2000);
-
+  // DATA.plot_RT_recombination_LogLik(1E-6, 2000);
   // DATA.display_raw_and_primerID_counts();
+	*/
 
   return EXIT_SUCCESS;
 }
