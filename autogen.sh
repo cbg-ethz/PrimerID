@@ -38,17 +38,19 @@ then
 	rm -rf LogLik.Rout
 	rm -rf .RData
 	rm -rf .Rapp.history
+	rm -rf pidalyser
+	rm -rf pidalign
 
 	# ./src
+	rm -rf src/.dirstamp
 	rm -rf src/.deps/
 	rm -rf src/Makefile
 	rm -rf src/Makefile.in
-	
-	rm -rf src/pidalyser
 	rm -rf src/alignment.o
 	rm -rf src/main.o
 	rm -rf src/proper_read.o
 	rm -rf src/reference.o
+	rm -rf src/pidalign-pidalign.o
 
 	# Tarballs
 	rm -rf pidalyser-0.1.tar.bz2

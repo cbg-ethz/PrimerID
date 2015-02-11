@@ -225,6 +225,7 @@ class seq_statistics
 			std::ofstream output     ((file_stem + "_unique.csv").c_str());
 			std::ofstream output_repl((file_stem + "_replicates.csv").c_str());
 			
+			
 			for(size_t i = 0; i < 4; ++i)
 			{
 				output      << std::fixed << std::setprecision(5) << _marginal_counts[0][i]      / static_cast<double>(_unique_counts);
@@ -242,6 +243,28 @@ class seq_statistics
 			
 		  output.close();
 			output_repl.close();
+			
+			// write list of primers and their PCR abundances
+			std::ofstream output_primers((file_stem + "_primers.csv").c_str());
+			std::string tmp;
+			
+			output_primers << "Primer,Count\n";
+			for(size_t i = 0; i < _whole_pID_counts_repl.size(); ++i)
+			{
+				if (_whole_pID_counts_repl[i])
+				{
+					tmp = number_To_DNA(i, _L);
+					
+					if (_whole_pID_counts_repl[tmp] != _whole_pID_counts_repl[i])
+					{
+						std::cerr << "Failure!\n";
+						exit(1);
+					}
+					
+					output_primers << tmp << ',' << _whole_pID_counts_repl[i] << '\n';
+				}
+			}
+			output_primers.close();
 		}
 		
 		void calculate_comprehensive_statistics(const std::string& strLabel) const

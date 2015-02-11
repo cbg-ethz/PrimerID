@@ -115,6 +115,27 @@ PKG_CHECK_MODULES([GSL], [gsl])
 
 
 
+dnl ===============
+dnl Check for Seqan
+dnl ===============
+AC_ARG_VAR([SEQAN_INCLUDEDIR], [contains the include path to the Seqan headers])
+AC_MSG_CHECKING([whether seqan headers are available])
+save_cppflags="$CPPFLAGS"
+CPPFLAGS="$CPPFLAGS -I$SEQAN_INCLUDEDIR"
+AC_LINK_IFELSE([
+	AC_LANG_SOURCE(
+		[[
+		#include <seqan/basic.h>
+		int main() { seqan::Pair<int, int> pair; return 0; }
+		]]
+	)],
+	[AC_MSG_RESULT([yes])],
+	[AC_MSG_ERROR([could not find seqan headers! If the seqan headers are not located within the compiler's default search path, specify them with the SEQAN_INCLUDEDIR variable to the configure script.])]
+)
+CPPFLAGS="$save_cppflags"
+
+
+
 dnl ========
 dnl Finalise
 dnl ========
