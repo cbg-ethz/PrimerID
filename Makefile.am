@@ -26,7 +26,7 @@ pidalyser_LDADD = $(GSL_LIBS)
 
 # pidalign
 pidalign_includes = \
-	ednafull.hpp
+	src/ednafull.hpp
 pidalign_SOURCES = $(pidalign_includes) \
 	src/pidalign.cpp
 pidalign_CPPFLAGS = \
