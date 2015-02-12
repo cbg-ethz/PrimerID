@@ -103,8 +103,7 @@ AX_CXX_COMPILE_STDCXX_11([], [mandatory])
 dnl ===================
 dnl Initialise Automake
 dnl ===================
-AM_INIT_AUTOMAKE([1.14 foreign dist-bzip2 no-dist-gzip subdir-objects])
-AM_MAINTAINER_MODE([enable])
+AM_INIT_AUTOMAKE([1.14 foreign dist-bzip2 no-dist-gzip subdir-objects silent-rules])
 
 
 
@@ -133,6 +132,7 @@ AC_LINK_IFELSE([
 	[AC_MSG_ERROR([could not find seqan headers! If the seqan headers are not located within the compiler's default search path, specify them with the SEQAN_INCLUDEDIR variable to the configure script.])]
 )
 CPPFLAGS="$save_cppflags"
+AX_OPENMP([AC_SUBST(OPENMP_CXXFLAGS)], [AC_MSG_WARN([OpenMP support is unavailable - pidalign will only run single-threaded])])
 
 
 

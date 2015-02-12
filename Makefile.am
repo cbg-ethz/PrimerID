@@ -31,3 +31,5 @@ pidalign_SOURCES = $(pidalign_includes) \
 	src/pidalign.cpp
 pidalign_CPPFLAGS = \
 	-I$(SEQAN_INCLUDEDIR)
+pidalign_CXXFLAGS = \
+	$(OPENMP_CXXFLAGS)
