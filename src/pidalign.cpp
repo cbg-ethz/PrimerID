@@ -81,7 +81,7 @@ parseCommandLine(AppOptions & options, int argc, char const ** argv)
 
     // Define usage line and long description.
     addUsageLine(parser, "[\\fIOPTIONS\\fP] \\fB<R1.fastq>\\fP [\\fB<R2.fastq>\\fP]");
-    //addDescription(parser, "pid.");
+    addDescription(parser, "pidalign performs a full-exhaustive Needleman-Wunsch alignment with affine gap costs. For performance reasons, pidalign is multithreaded, and it is generally advised to use the -t option to max out the parallelization.");
 
     ArgParseArgument patternArg(ArgParseArgument::INPUT_FILE, "IN", true);
     setValidValues(patternArg, "fastq fq");
@@ -96,7 +96,7 @@ parseCommandLine(AppOptions & options, int argc, char const ** argv)
     setValidValues(parser, "o", "sam");
 
     addOption(parser, ArgParseOption("t", "threads", "The number of threads to be used.", ArgParseArgument::INTEGER));
-    addOption(parser, ArgParseOption("bf", "bufferSize", "The number of hits stored in a buffer before writing them to disk.", ArgParseArgument::INTEGER));
+    addOption(parser, ArgParseOption("b", "bufferSize", "The number of hits stored in a buffer before writing them to disk.", ArgParseArgument::INTEGER));
     addOption(parser, ArgParseOption("s", "minScore", "MinScore of alignment in order to be considered.", ArgParseArgument::INTEGER));
 
     // Add Examples Section.
@@ -112,15 +112,15 @@ parseCommandLine(AppOptions & options, int argc, char const ** argv)
         return res;
 
     // Extract option values.
-    getArgumentValue(options.refFileName, parser, 0);
-    resize(options.patternFileNames, getArgumentValueCount(parser, 1));
-    for (unsigned i =0 ; i < getArgumentValueCount(parser, 1); ++i)
+    resize(options.patternFileNames, getArgumentValueCount(parser, 0));
+    for (unsigned i =0 ; i < getArgumentValueCount(parser, 0); ++i)
     {
-        getArgumentValue(options.patternFileNames[i], parser, 1, i);
+        getArgumentValue(options.patternFileNames[i], parser, 0, i);
     }
+		getOptionValue(options.refFileName, parser, "r");
     getOptionValue(options.outputFileName, parser, "o");
-    getOptionValue(options.numThreads, parser, "th");
-    getOptionValue(options.bufferSize, parser, "bf");
+    getOptionValue(options.numThreads, parser, "t");
+    getOptionValue(options.bufferSize, parser, "b");
     getOptionValue(options.minScore, parser, "s");
 
     return ArgumentParser::PARSE_OK;
@@ -176,8 +176,8 @@ int main(int argc, char const ** argv)
     if (res != ArgumentParser::PARSE_OK)
         return res == ArgumentParser::PARSE_ERROR;
 
-    std::cout << "primerIdIdentifyer\n"
-              << "==================\n\n";
+    std::cout << "pidalign\n"
+              << "========\n\n";
 
     // Preparation of out stream including SAM header
     std::ofstream stream(toCString(options.outputFileName), std::ios::out | std::ios::app);
