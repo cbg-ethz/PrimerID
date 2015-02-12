@@ -11,6 +11,7 @@ then
 	rm -rf autom4te.cache/
 	rm -rf config.h
 	rm -rf config.h.in
+	rm -rf config.h.in~
 	rm -rf config.log
 	rm -rf config.status
 	rm -rf configure
@@ -34,9 +35,10 @@ then
 
 	# Tarballs
 	rm -rf pidalyser-0.1.tar.bz2
+	rm -rf pidalyser-0.1/
 
 	# OS X files
-	rm -rf .DS_Store src/.DS_Store
+	rm -rf .DS_Store src/.DS_Store m4/.DS_Store
 else
 	echo "Bootstrapping Autotools"
 	autoreconf -vif
