@@ -103,22 +103,29 @@ struct std::__is_val_expr<DNAvector<_Tp> > : std::true_type {};
 class seq_statistics
 {
 	private:
-		std::vector<DNAvector<int>> _marginal_counts;
-		std::vector<DNAvector<int>> _marginal_counts_repl;
+		std::vector<DNAvector<int>> _marginal_counts;         // position-wise counts of bases in pID
+		std::vector<DNAvector<int>> _marginal_counts_repl;    // position-wise counts of bases in pID times PCR multiplicity
 		
-		std::vector<DNAvector<int>> _pairwise_counts;
-		std::vector<DNAvector<int>> _pairwise_counts_repl;
+		std::vector<DNAvector<int>> _pairwise_counts;         // position-wise counts of bases in pID
+		std::vector<DNAvector<int>> _pairwise_counts_repl;    // position-wise counts of bases in pID times PCR multiplicity
 		
-		DNAvector<int> _whole_pID_counts;      // occurrences of RT primers
-		DNAvector<int> _whole_pID_counts_repl; // occurrences of RT primers, weighted by PCR replicates
+		DNAvector<int> _whole_pID_counts;                     // pID counts
+		DNAvector<int> _whole_pID_counts_repl;                // pID counts times PCR multiplicity
 		
-		std::vector<int> _histogram_of_abundance;
+		DNAvector<int> _collision_free_whole_pID_counts;      // pID counts without collisions
+		DNAvector<int> _collision_free_whole_pID_counts_repl; // pID counts without collisions times PCR multiplicity
+		
+		std::valarray<int> _histogram_of_abundance;             // histogram of abundances
+		int _max_abundance;
+		
+		std::valarray<int> _histogram_of_pID_length;            // histogram of pID lengths
+		const static int _max_len_pID = 20;
 	
 	public:
 		size_t _L;
 		int _unique_counts;
 		int _repl_counts;
-		
+
 		seq_statistics(int L) :
 			_marginal_counts(L, DNAvector<int>(1)),
 			_marginal_counts_repl(L, DNAvector<int>(1)),
@@ -129,7 +136,12 @@ class seq_statistics
 			_whole_pID_counts(L),
 			_whole_pID_counts_repl(L),
 			
-			_histogram_of_abundance(10000, 0),
+			_collision_free_whole_pID_counts(L),
+			_collision_free_whole_pID_counts_repl(L),
+			
+			_histogram_of_abundance(0, 10000),
+			_max_abundance(0),
+			_histogram_of_pID_length(0, _max_len_pID+1),
 			
 			_L(L),
 			_unique_counts(0),
@@ -146,7 +158,7 @@ class seq_statistics
 			_whole_pID_counts = DNAvector<int>(1);
 			_whole_pID_counts_repl = DNAvector<int>(1);
 			
-			_histogram_of_abundance.assign(10000, 0);
+			_histogram_of_abundance = 0;
 		}
 		
 		void show_statistics() const
@@ -164,6 +176,12 @@ class seq_statistics
 				
 				std::cout << '\n';
 			}
+		}
+		
+		void addLengthToHistogram(int lengthPID)
+		{
+			if (lengthPID <= _max_len_pID)
+				++_histogram_of_pID_length[lengthPID];
 		}
 		
 		void addPrimer(const std::string& strPrimer, int replicates)
@@ -186,12 +204,20 @@ class seq_statistics
 			++_whole_pID_counts[strPrimer];
 			  _whole_pID_counts_repl[strPrimer] += replicates;
 			
-			// 4.) add to abundance
-			++_histogram_of_abundance[replicates];
-			
-			// 5.) keep track of sum
+			// 4.) keep track of sum
 			++_unique_counts;
-			_repl_counts += replicates;
+			  _repl_counts += replicates;
+			
+			// 5.) add to histogram
+			++_histogram_of_abundance[replicates];
+				_max_abundance = std::max(_max_abundance, replicates);
+		}
+		
+		void addPrimer_collisionFree(const std::string& strPrimer, int replicates)
+		{
+			// 1.) add to total RT count
+			++_collision_free_whole_pID_counts[strPrimer];
+			  _collision_free_whole_pID_counts_repl[strPrimer] += replicates;
 		}
 		
 		void mergestatistics(const seq_statistics& statisticsB)
@@ -214,6 +240,16 @@ class seq_statistics
 			_whole_pID_counts += statisticsB._whole_pID_counts;
 			_whole_pID_counts_repl += statisticsB._whole_pID_counts_repl;
 			
+			_collision_free_whole_pID_counts += statisticsB._collision_free_whole_pID_counts;
+			_collision_free_whole_pID_counts_repl += statisticsB._collision_free_whole_pID_counts_repl;
+			
+			// 4.) histograms
+			_histogram_of_abundance += statisticsB._histogram_of_abundance;
+			_max_abundance = std::max(_max_abundance, statisticsB._max_abundance);
+		
+			_histogram_of_pID_length += statisticsB._histogram_of_pID_length;
+			
+			// 5.) total counts
 			_unique_counts += statisticsB._unique_counts;
 			_repl_counts += statisticsB._repl_counts;
 		}
@@ -224,7 +260,6 @@ class seq_statistics
 			
 			std::ofstream output     ((file_stem + "_unique.csv").c_str());
 			std::ofstream output_repl((file_stem + "_replicates.csv").c_str());
-			
 			
 			for(size_t i = 0; i < 4; ++i)
 			{
@@ -246,25 +281,54 @@ class seq_statistics
 			
 			// write list of primers and their PCR abundances
 			std::ofstream output_primers((file_stem + "_primers.csv").c_str());
+			std::ofstream output_primers_collision_free((file_stem + "_primers_collision_free.csv").c_str());
 			std::string tmp;
 			
 			output_primers << "Primer,Count\n";
+			output_primers_collision_free << "Primer,Count\n";
 			for(size_t i = 0; i < _whole_pID_counts_repl.size(); ++i)
 			{
 				if (_whole_pID_counts_repl[i])
 				{
 					tmp = number_To_DNA(i, _L);
-					
 					if (_whole_pID_counts_repl[tmp] != _whole_pID_counts_repl[i])
 					{
 						std::cerr << "Failure!\n";
 						exit(1);
 					}
-					
 					output_primers << tmp << ',' << _whole_pID_counts_repl[i] << '\n';
+				}
+				
+				if (_collision_free_whole_pID_counts_repl[i])
+				{
+					tmp = number_To_DNA(i, _L);
+					if (_collision_free_whole_pID_counts_repl[tmp] != _collision_free_whole_pID_counts_repl[i])
+					{
+						std::cerr << "Failure!\n";
+						exit(1);
+					}
+					output_primers_collision_free << tmp << ',' << _collision_free_whole_pID_counts_repl[i] << '\n';
 				}
 			}
 			output_primers.close();
+			output_primers_collision_free.close();
+		}
+		
+		void write_histograms(const std::string& file_stem) const
+		{
+			// pID length histogram
+			std::ofstream output_pID_length((file_stem + "_pID_length_histograms.csv").c_str());
+			output_pID_length << "Length,Count\n";
+			for (int i = 0; i <= _max_len_pID; ++i)
+				output_pID_length << i << ',' << _histogram_of_pID_length[i] << '\n';
+			output_pID_length.close();
+			
+			// abundance histogram
+			std::ofstream output_abundance((file_stem + "_abundance_histograms.csv").c_str());
+			output_abundance << "Abundance,Count\n";
+			for (int i = 1; i <= _max_abundance; ++i)
+				output_abundance << i << ',' << _histogram_of_abundance[i] << '\n';
+			output_abundance.close();
 		}
 		
 		void calculate_comprehensive_statistics(const std::string& strLabel) const

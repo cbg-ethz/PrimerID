@@ -123,23 +123,24 @@ int main(int argc, char* argv[])
 	DATA.filtering_QA();
 	
   DATA.remove_primerID_collisions(minCoverage, nonAmbigFrac, true);
-  DATA.show_clone_frequencies();
+  //DATA.show_clone_frequencies();
 
   // 4.) calculate statistics
   std::cout << "4. Performing statistics\n";
 
-  //DATA.estimate_RT_substitution_rate(true);
-  //DATA.estimate_RT_recombination_rate(true);
-  //DATA.estimate_PCR_substitution_rate(true);
+  DATA.estimate_RT_substitution_rate(true);
+  DATA.estimate_RT_recombination_rate(true);
+  DATA.estimate_PCR_substitution_rate(true);
 
 	DATA.write_prob_to_csv();
+
+	DATA.display_raw_and_primerID_counts();
 
 	/*
 	// DATA.calculate_RT_bias_pvalue();
   // DATA.estimate_effective_RNA_number(true);
   // DATA.show_recombination_patterns();
   // DATA.plot_RT_recombination_LogLik(1E-6, 2000);
-  // DATA.display_raw_and_primerID_counts();
 	*/
 
   return EXIT_SUCCESS;

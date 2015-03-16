@@ -18,7 +18,7 @@ class alignment
 private:
   reference _reference;
 	
-	/* READ STORE */
+	// store raw reads from SAM data
 	struct raw_paired_read {
 		const std::string DNA;
 		const std::string PrimerID;
@@ -42,29 +42,21 @@ private:
 		len_pID(i_len_pID) {}
 	};
 	
-	// store raw PAIRED reads
+	// collection of raw PAIRED reads
 	std::vector<raw_paired_read> _raw_reads;
 	
-  // extracted primerID with a map to all PCR replicates
+	// map of primerID -> PCR ensembl
   std::map<std::string, std::vector<proper_read>  > raw_primerID_map;
 
-  // primerID map with collisions/PCR-mutations-in-PrimerID removed
+  // map of primerID -> collision-free PCR ensembl
   std::map<std::string, std::vector<proper_read*> > collision_free_primerID_map;
 
-  // primerID map to consensus sequence
+  // map of primerID -> consensus sequence of collision-free PCR ensembl
   std::map<std::string, consensus_read> consensus_primerID_map;
 
-	std::string
-	call_consensus_and_remove_collisions(std::vector<proper_read>& reads,
-																				int minDisplay,
-																				const std::string& PrimerID,
-																				std::vector<proper_read*>& filtered_reads);
+	std::string call_consensus_and_remove_collisions(std::vector<proper_read>& reads, int minDisplay, const std::string& PrimerID, std::vector<proper_read*>& filtered_reads);
 	
 public:
-	/* PRIMERID STATISTICS */
-	// pID histogram
-	std::vector<int> _histogram_of_primerID_lengths;
-	
 	// primerID statistics
 	seq_statistics _pid_stats;
 	
@@ -87,12 +79,10 @@ public:
   alignment(const std::string& fileName);
 
 	void filtering_QA();
-  void remove_primerID_collisions(int minC, double minMajorFraction,
-                                  bool report = true, int minDisplay = 0);
+  void remove_primerID_collisions(int minC, double minMajorFraction, bool report = true, int minDisplay = 0);
 
   // RT stuff
   hamming_return_type calculate_RT_mismatches() const;
-
   double LogLik(double s, double r) const;
 
   // PCR stuff

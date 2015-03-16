@@ -18,14 +18,14 @@
 struct SAMentry
 {
   std::string QNAME;
-  int FLAG;
+  int         FLAG;
   std::string RNAME;
-  int POS;
-  int MAPQ;
+  int         POS;
+  int         MAPQ;
   std::string CIGAR;
   std::string RNEXT;
-  int PNEXT;
-  int TLEN;
+  int         PNEXT;
+  int         TLEN;
   std::string SEQ;
   std::string QUAL;
 
@@ -43,9 +43,7 @@ struct SAMentry
       const std::string& _TLEN,
       const std::string& _SEQ,
       const std::string& _QUAL)
-      : QNAME(_QNAME), FLAG(stoi(_FLAG)), RNAME(_RNAME), POS(stoi(_POS)), MAPQ(stoi(_MAPQ)), CIGAR(_CIGAR), RNEXT(_RNEXT), PNEXT(stoi(_PNEXT)), TLEN(stoi(_TLEN)), SEQ(_SEQ), QUAL(_SEQ)
-  {
-  }
+      : QNAME(_QNAME), FLAG(stoi(_FLAG)), RNAME(_RNAME), POS(stoi(_POS)), MAPQ(stoi(_MAPQ)), CIGAR(_CIGAR), RNEXT(_RNEXT), PNEXT(stoi(_PNEXT)), TLEN(stoi(_TLEN)), SEQ(_SEQ), QUAL(_SEQ) {}
 };
 
 typedef std::pair<std::string, std::pair<SAMentry, SAMentry>> raw_sequence_pair;
@@ -109,7 +107,7 @@ void construct_sequence(const SAMentry& READ, std::string& DNA, const reference&
   }
 
 	// 2.) calculate statistics for reads
-	if (READ.POS > 270)
+	if (READ.POS > 260)
 	{
 		// right read
 		if (offsetRef > ref.PID_start)
@@ -147,21 +145,29 @@ void construct_sequence(const SAMentry& READ, std::string& DNA, const reference&
 void merge_reads(const std::string& left_Read, const std::string& right_Read, int left_start, int right_start, const reference& ref, std::string& new_final_read)
 {
   //int global_start, global_end;
-
   //global_start = left_start;
   //global_end = right_start + right_Read.length();
 
   new_final_read.clear();
+	
+	// pad before left read
   new_final_read.append(std::max(left_start - 1, 0), 'N');
+	
+	// append left read
   new_final_read.append(left_Read);
+	
+	// append spacer between read mates
   new_final_read.append(std::max(static_cast<int>(right_start - 1 - new_final_read.length()), 0), 'N');
+	
+	// append right read
   new_final_read.append(right_Read);
+	
+	// pad after the end of the read
   new_final_read.append(std::max(static_cast<int>(ref.genome_length - new_final_read.length()), 0), 'N');
 }
 
 alignment::alignment(const std::string& fileName)
-: _histogram_of_primerID_lengths(500, 0),
-	_pid_stats(10),
+: _pid_stats(10),
 	input_fileName(fileName)
 {
   size_t slash_pos = input_fileName.find_last_of('/');
@@ -185,11 +191,10 @@ alignment::alignment(const std::string& fileName)
   {
     std::string temp, QNAME;
     std::vector<std::string> SplitVec;
-    int line_no = 0;
+    int line_no = 1;
 
     while (input.good())
     {
-      ++line_no;
       if (line_no % 100000 == 0)
         std::cout << "Loaded " << line_no << " lines\n";
 
@@ -198,6 +203,7 @@ alignment::alignment(const std::string& fileName)
 
       if ((temp.length() == 0) || (temp[0] == '@'))
         continue;
+			++line_no;
 
       boost::split(SplitVec, temp, boost::is_any_of("\t"), boost::token_compress_on);
 
@@ -280,7 +286,7 @@ alignment::alignment(const std::string& fileName)
 
 		// 4.) add to primerID length histogram
 		len_pID = std::max(static_cast<int>(primerID.length()) + no_inserts - no_dels, 0);
-		++_histogram_of_primerID_lengths[len_pID];
+		
 		
 		// DEBUG
 		//std::cout << temp_final_read << '\n';
@@ -305,7 +311,7 @@ void alignment::filtering_QA()
   for (const auto& i : _raw_reads)
   {
     _reference.assign_counts(i.DNA);
-		++_histogram_of_primerID_lengths[i.len_pID];
+		_pid_stats.addLengthToHistogram(i.len_pID);
 		
 		valid = ((i.len_pID == 10) && (i.no_inserts == 0) && (i.no_dels == 0) && (i.len_overhang >= _reference.overhang_min_length));
     if (!(valid))
@@ -406,6 +412,7 @@ void alignment::remove_primerID_collisions(int minC, double minMajorFraction, bo
 	    //++primerID_RT_histogram[i.first];
 
       _reference.assign_counts(consensus, true);
+			_pid_stats.addPrimer_collisionFree(i.first, tmp.size());
 			//std::cout << i.first << '\t' << consensus << '\n';
 
       collision_free_primerID_map.emplace(i.first, tmp);
@@ -420,9 +427,10 @@ void alignment::remove_primerID_collisions(int minC, double minMajorFraction, bo
 
   if (report)
   {
-    std::cout << "Indecisive PrimerIDs: " << number_indecisive << '\n';
-    std::cout << " Collision PrimerIDs: " << number_collisions << " (" << std::fixed << std::setprecision(1) << static_cast<double>(number_collisions) / (number_singletons + number_collisions) * 100 << "%)\n";
-    std::cout << "     Total PrimerIDs: " << number_singletons + number_collisions << '\n';
+		std::cout << "Collision-free PrimerIDs: " << number_singletons << '\n';
+    std::cout << "    Indecisive PrimerIDs: " << number_indecisive << '\n';
+    std::cout << "     Collision PrimerIDs: " << number_collisions << " (" << std::fixed << std::setprecision(1) << static_cast<double>(number_collisions) / (number_singletons + number_collisions) * 100 << "%)\n";
+    std::cout << "         Total PrimerIDs: " << raw_primerID_map.size() << '\n';
   }
 }
 
@@ -610,9 +618,11 @@ void alignment::display_raw_and_primerID_counts() const
 {
   for (int i = 0; i < _reference.K; ++i)
   {
-    std::cout << _reference.all_reference_strains[i].name << '\t';
-    std::cout << _reference.all_reference_strains[i].PID_counts << '\t';
-    std::cout << _reference.all_reference_strains[i].raw_counts << '\n';
+    std::cout << _reference.all_reference_strains[i].name << '\t'
+    	<< _reference.all_reference_strains[i].PID_counts << " (" << std::fixed << std::setprecision(1) << 
+				static_cast<double>(_reference.all_reference_strains[i].PID_counts) / _reference.PID_total * 100 << ")\t"
+			<< _reference.all_reference_strains[i].raw_counts	<< " (" <<
+				static_cast<double>(_reference.all_reference_strains[i].raw_counts) / _reference.raw_total * 100 << ")\n";
   }
 
   std::cout << "-----------------------\n";
@@ -902,13 +912,14 @@ void alignments::write_prob_to_csv()
   for (const alignment& i : collections_alignments)
   {
     _pid_stats.mergestatistics(i._pid_stats);
-		i._pid_stats.write_to_csv(i.just_fileName);
+		i._pid_stats.write_histograms(i.fileStem);
+		i._pid_stats.write_to_csv(i.fileStem);
 		
-		i._pid_stats.calculate_comprehensive_statistics(i.fileStem);
+		//i._pid_stats.calculate_comprehensive_statistics(i.fileStem);
   }
 	
 	_pid_stats.write_to_csv("Total");
-	_pid_stats.calculate_comprehensive_statistics("Total");
+	//_pid_stats.calculate_comprehensive_statistics("Total");
 }
 
 /*
