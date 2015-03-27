@@ -37,6 +37,20 @@ using namespace seqan;
 // ==========================================================================
 
 // --------------------------------------------------------------------------
+// Class SamStruct
+// --------------------------------------------------------------------------
+
+//struct SamStruct
+//{
+//    String<char> readName;
+//    String<char> contigName;
+//    String<CigarElement<> > cigar;
+//    String<char> seq;
+//    unsigned pos;
+//    int score;
+//};
+
+// --------------------------------------------------------------------------
 // Class AppOptions
 // --------------------------------------------------------------------------
 
@@ -61,6 +75,7 @@ struct AppOptions
     {}
 };
 
+
 // ==========================================================================
 // Functions
 // ==========================================================================
@@ -83,13 +98,17 @@ parseCommandLine(AppOptions & options, int argc, char const ** argv)
     addUsageLine(parser, "[\\fIOPTIONS\\fP] \\fB<R1.fastq>\\fP [\\fB<R2.fastq>\\fP]");
     addDescription(parser, "pidalign performs a full-exhaustive Needleman-Wunsch alignment with affine gap costs. For performance reasons, pidalign is multithreaded, and it is generally advised to use the -t option to max out the parallelization.");
 
-    ArgParseArgument patternArg(ArgParseArgument::INPUT_FILE, "IN", true);
-    setValidValues(patternArg, "fastq fq");
-    addArgument(parser, patternArg);
-		
-    addOption(parser, ArgParseOption("r", "referenceFileName", "Name of the reference file.", ArgParseArgument::INPUT_FILE, "IN"));
-    setRequired(parser, "r");
-    setValidValues(parser, "r", "fasta fa fna");
+    addOption(parser, ArgParseOption("r1", "reads1FileName", "Name of the file containg the first mate pair reads.", ArgParseArgument::INPUT_FILE, "IN"));
+    setRequired(parser, "r1");
+    setValidValues(parser, "r1", "fasta fa fna fastq fq fnq");
+
+    addOption(parser, ArgParseOption("r2", "reads2FileName", "Name of the file containg the second mate pair reads.", ArgParseArgument::INPUT_FILE, "IN"));
+    setRequired(parser, "r2");
+    setValidValues(parser, "r2", "fasta fa fna fastq fq fnq");
+
+    addOption(parser, ArgParseOption("ref", "referenceFileName", "Name of the reference file.", ArgParseArgument::INPUT_FILE, "IN"));
+    setRequired(parser, "ref");
+    setValidValues(parser, "ref", "fasta fa fna");
 
     addOption(parser, ArgParseOption("o", "outputFileName", "Name of the output file.", ArgParseArgument::OUTPUT_FILE, "OUT"));
     setRequired(parser, "o");
@@ -112,12 +131,10 @@ parseCommandLine(AppOptions & options, int argc, char const ** argv)
         return res;
 
     // Extract option values.
-    resize(options.patternFileNames, getArgumentValueCount(parser, 0));
-    for (unsigned i =0 ; i < getArgumentValueCount(parser, 0); ++i)
-    {
-        getArgumentValue(options.patternFileNames[i], parser, 0, i);
-    }
-		getOptionValue(options.refFileName, parser, "r");
+    resize(options.patternFileNames, 2);
+    getOptionValue(options.patternFileNames[0], parser, "r1");
+    getOptionValue(options.patternFileNames[1], parser, "r2");
+    getOptionValue(options.refFileName, parser, "ref");
     getOptionValue(options.outputFileName, parser, "o");
     getOptionValue(options.numThreads, parser, "t");
     getOptionValue(options.bufferSize, parser, "b");
@@ -126,13 +143,14 @@ parseCommandLine(AppOptions & options, int argc, char const ** argv)
     return ArgumentParser::PARSE_OK;
 }
 
-template <typename TStream, typename TAlign>
-void writeLocal(TStream & stream,
-           TAlign & align,
-           String<char> const & patternId,
-           String<char> const & refId,
-           String<char> & cigar,
-           int score)
+template <typename TAlign>
+void storeRecord(String<BamAlignmentRecord> & bamRecords,
+                unsigned short flag,
+                TAlign & align,
+                StringSet<String<char> > const & patternIds,
+                unsigned refId,
+                int score,
+                unsigned bamIndex)
 {
     int clipBegin = row(align, 1)._array[0];
     int clipEnd = length(row(align, 1)) - row(align, 1)._array[length(row(align, 1)._array) - 1];
@@ -140,19 +158,85 @@ void writeLocal(TStream & stream,
     setClippedBeginPosition(row(align, 1), clipBegin);
     setClippedEndPosition(row(align, 0), clipEnd);
     setClippedEndPosition(row(align, 1), clipEnd);
-    getCigarString(cigar,row(align, 0), row(align, 1), 1000);
-    stream << patternId << "\t";                                //QNAME
-    stream << (unsigned short)0x0002 << "\t";                        //FLAG
-    stream << refId << "\t";   //RNAME
-    stream << row(align, 1)._array[0] + 1 << "\t";    //POS
-    stream << score << "\t";
-    stream << cigar << "\t";                                         //CIGAR
-    stream << "*" << "\t";                                           //RNEXT
-    stream << 0 << "\t";                                             //PNEXT
-    stream << 0 << "\t";                                             //TLen
-    stream << source(row(align, 1)) << "\t";                                //SEQ
-    stream << "*" << "\n";                                           //QUAL
+    getCigarString(bamRecords[bamIndex].cigar,row(align, 0), row(align, 1), 1000);
+    String<CigarElement<> > const & cigarRef = bamRecords[bamIndex].cigar;
+    for (unsigned i = 0; i < length(cigarRef); ++i)
+        if (cigarRef[i].operation == 'D' && cigarRef[i].count >= 4)
+            bamRecords[bamIndex].flag = BamFlags::BAM_FLAG_UNMAPPED;
 
+    if (bamRecords[bamIndex].flag & BamFlags::BAM_FLAG_UNMAPPED)
+        return;
+
+    bamRecords[bamIndex].rID = refId;                            // position of ref in header
+    bamRecords[bamIndex].qName = patternIds[bamIndex];              //qName
+    bamRecords[bamIndex].flag = flag;                               //FLAG
+    bamRecords[bamIndex].beginPos = row(align, 1)._array[0] + 1;    //POS
+    bamRecords[bamIndex].mapQ = 60;                              //MapQual
+    //stream << 0 << "\t";                                            //PNEXT
+    //stream << 0 << "\t";                                            //TLen
+    bamRecords[bamIndex].seq = source(row(align, 1));               //SEQ
+    //stream << "*" << "\n";                                          //QUAL
+    bamRecords[bamIndex].tags = "ASi";
+    appendRawPod(bamRecords[bamIndex].tags, score);
+}
+
+bool compRecords(BamAlignmentRecord const & left, BamAlignmentRecord const & right)
+{
+    if (left.qName < right.qName)
+        return true;
+
+    if (left.qName > right.qName)
+        return false;
+
+    if (left.beginPos < right.beginPos)
+        return true;
+
+    return false;
+}
+
+void
+sortRecords(String<BamAlignmentRecord> & bamRecords)
+{
+    std::sort(begin(bamRecords), end(bamRecords), compRecords);
+}
+
+void
+trimName(String<char> & readName)
+{
+    for (unsigned i = 0; i < length(readName); ++i)
+        if (readName[i] == ' ')
+        {
+            resize(readName, i + 1);
+            return;
+        }
+}
+
+void adjustFlags(String<BamAlignmentRecord> & bamRecords)
+{
+    for (unsigned i = 0; i < length(bamRecords) - 1; ++i)
+    {
+        if (bamRecords[i].qName == bamRecords[i+1].qName)
+        {
+            if ( (bamRecords[i].flag & BamFlags::BAM_FLAG_UNMAPPED) || 
+                    (bamRecords[i+1].flag & BamFlags::BAM_FLAG_UNMAPPED) )
+            {
+                bamRecords[i].flag = BamFlags::BAM_FLAG_UNMAPPED;
+                bamRecords[i+1].flag = BamFlags::BAM_FLAG_UNMAPPED;
+            }
+            else
+            {
+                bamRecords[i].flag |= BamFlags::BAM_FLAG_MULTIPLE | BamFlags::BAM_FLAG_ALL_PROPER | BAM_FLAG_FIRST;
+                bamRecords[i].pNext = bamRecords[i+1].rID;
+                bamRecords[i+1].flag |= BamFlags::BAM_FLAG_MULTIPLE | BamFlags::BAM_FLAG_ALL_PROPER | BAM_FLAG_LAST;
+                bamRecords[i+1].pNext = bamRecords[i].rID;
+            }
+            ++i;
+        }
+        else
+        {
+            bamRecords[i].flag = BamFlags::BAM_FLAG_UNMAPPED;
+        }
+    }
 }
 
 // --------------------------------------------------------------------------
@@ -179,135 +263,163 @@ int main(int argc, char const ** argv)
     std::cout << "pidalign\n"
               << "========\n\n";
 
-    // Preparation of out stream including SAM header
-    std::ofstream stream(toCString(options.outputFileName), std::ios::out | std::ios::app);
-    stream << "@HD\tVN:1.5\tSO:coordinate\n";
     // Reference
     SeqFileIn seqInRef(toCString(options.refFileName));
     StringSet<String<char> > refIds;
     StringSet<TRefSeq> refSeqs;
     readRecords(refIds, refSeqs, seqInRef);
 
+    // Preparation of header of resulting sam file
+    //std::ofstream stream(toCString(options.outputFileName), std::ios::out | std::ios::app);
+    //stream << "@HD\tVN:1.5\tSO:coordinate\n";
+    //for (unsigned i = 0; i < length(refSeqs); ++i)
+    //  stream << "@SQ\tSN:" << refIds[i] << "\tLN:" << length(refSeqs[i]) << "\n";
+    //stream.close();
+    BamHeader bamHeader;
+    BamHeaderRecord bamHeaderRecord;
+    setTagValue("VN", "1.5", bamHeaderRecord);
+    setTagValue("SO", "queryname", bamHeaderRecord);
+    appendValue(bamHeader, bamHeaderRecord);
+    StringSet<String<char> > nameStore;
+    NameStoreCache<StringSet<String<char> > > nameStoreCache(nameStore);
+    BamIOContext<> bamContext(nameStore, nameStoreCache);
     for (unsigned i = 0; i < length(refSeqs); ++i)
-        stream << "@SQ\tSN:" << refIds[i] << "\tLN:" << length(refSeqs[i]) << "\n";
-    stream.close();
-
+    {
+        clear(bamHeaderRecord);
+        bamHeaderRecord.type = BAM_HEADER_REFERENCE;
+        setTagValue("SN", refIds[i], bamHeaderRecord);
+        setTagValue("LN", std::to_string(length(refSeqs[i])), bamHeaderRecord);
+        appendValue(bamHeader, bamHeaderRecord);
+        //unsigned globalRefId = nameToId(contigNamesCache(bamContext), refIds[i]);
+        nameToId(contigNamesCache(bamContext), refIds[i]);
+        //contigLengths(bamContext)[globalRefId] = length(refSeqs[i]);
+    }
 
     // Alignment helpers
-    
     Ednafull scoringScheme(-1, -20);
     AlignConfig<true, false, false, true> alignConfig;
 
-    unsigned counter = 0;
+    // Pattern
+    StringSet<CharString> patternIds;
+    StringSet<String<Dna5> > patternSeqs;
+    String<Dna5> revComPatternSeq;
     for (unsigned fileCounter = 0; fileCounter < length(options.patternFileNames); ++fileCounter)
     {
+        // reading the fastq files
         SeqFileIn seqInPattern(toCString(options.patternFileNames[fileCounter]));
-
-        // This is the parallelization starting point
-        SEQAN_OMP_PRAGMA(parallel num_threads(options.numThreads))
-        for (; ;)
+        while (!atEnd(seqInPattern))
         {
-            // Preparing the align Objects
-            String<Align<TRefSeq> > alignObjs, alignObjsRevComp;
-            resize(alignObjs, length(refSeqs));
-            resize(alignObjsRevComp, length(refSeqs));
+            unsigned newLength = length(patternIds) + 1;
+            resize(patternIds, newLength);
+            resize(patternSeqs, newLength);
+            readRecord(back(patternIds), back(patternSeqs), seqInPattern);
+            trimName(back(patternIds));
+        }
+        //readRecords(patternIds, patternSeqs, seqInPattern);
+    }
 
-            int maxScore, maxScoreRevComp, maxId, maxIdRevComp;
+    // prepare the resulting bam record
+    String<BamAlignmentRecord> bamRecords;
+    resize(bamRecords, length(patternIds));
 
-            for (unsigned i = 0; i < length(refSeqs); ++i)
-            {
-                resize(rows(alignObjs[i]), 2);
-                resize(rows(alignObjsRevComp[i]), 2);
-                assignSource(row(alignObjs[i], 0), refSeqs[i]);
-                assignSource(row(alignObjsRevComp[i], 0), refSeqs[i]);
-            }
-
-            // Pattern
-            StringSet<CharString> patternIds;
-            StringSet<String<Dna5> > patternSeqs;
-            String<Dna5> revComPatternSeq;
-
-            // Cigar String
-            CharString cigar;
-
-            std::ostringstream localStream;
-            // Reading the pattern
-            SEQAN_OMP_PRAGMA(critical (read_chunk))
-            {
-                if (!atEnd(seqInPattern))
-                {
-                    /*if(*/readRecords(patternIds, patternSeqs, seqInPattern, options.bufferSize);/* != 0)*/
-                    //{
-                    //    std::cout << "ERROR: Could not read samples!\n";
-                    //}
-                }
-                counter++;
-            }
-
-            if (length(patternIds) == 0)
-            {
-                //std::cerr << "TEST" << std::endl;
+    // This is the parallelization starting point
+    unsigned readIndex= 0;
+    unsigned short bamFlag = 0;
+    SEQAN_OMP_PRAGMA(parallel num_threads(options.numThreads))
+    for (; ;)
+    {
+        unsigned threadReadIndex;
+        SEQAN_OMP_PRAGMA(critical (adjust readIndex))
+        {
+            if (readIndex >= length(patternSeqs))
                 break;
-            }
 
-           // int lDiag = -30;
-           // int uDiag = 30;
-            for (unsigned i = 0; i < length(patternSeqs); ++i)
+            threadReadIndex = readIndex;
+            readIndex += options.bufferSize;
+        }
+
+        // Preparing the align Objects
+        String<Align<TRefSeq> > alignObjs, alignObjsRevComp;
+        resize(alignObjs, length(refSeqs));
+        resize(alignObjsRevComp, length(refSeqs));
+
+        int maxScore, maxScoreRevComp, maxId, maxIdRevComp;
+
+        for (unsigned i = 0; i < length(refSeqs); ++i)
+        {
+            resize(rows(alignObjs[i]), 2);
+            resize(rows(alignObjsRevComp[i]), 2);
+            assignSource(row(alignObjs[i], 0), refSeqs[i]);
+            assignSource(row(alignObjsRevComp[i], 0), refSeqs[i]);
+        }
+
+        unsigned threadIndexEnd = (length(patternSeqs) < readIndex + options.bufferSize - 1) ? length(patternSeqs) : readIndex + options.bufferSize - 1;
+        for (unsigned i = threadReadIndex; i < threadIndexEnd; ++i)
+        {
+            // align forward
+            maxScore = minValue<int>();
+            maxId = -1;
+            for (unsigned j = 0; j < length(alignObjs); ++j)
             {
-                // Determine if right or left aligned
-                String<Dna5> left= prefix(patternSeqs[i], 20);
-                String<Dna5> right = suffix(patternSeqs[i], length(patternSeqs[i]) - 20);
-
-                maxScore = minValue<int>();
-                maxId = -1;
-                for (unsigned j = 0; j < length(alignObjs); ++j)
+                assignSource(row(alignObjs[j], 1), patternSeqs[i]);
+                int result = globalAlignment(alignObjs[j], scoringScheme, alignConfig, maxScore);
+                if (maxScore < result)
                 {
-                    assignSource(row(alignObjs[j], 1), patternSeqs[i]);
-                    int result = globalAlignment(alignObjs[j], scoringScheme, alignConfig, maxScore);//, lDiag, uDiag);
-                    if (maxScore < result)
-                    {
-                        maxScore = result;
-                        maxId = j;
-                    }
-                }
-                revComPatternSeq = patternSeqs[i];
-                reverseComplement(revComPatternSeq);
-                maxScoreRevComp = minValue<int>();
-                maxIdRevComp = -1;
-                for (unsigned j = 0; j < length(alignObjsRevComp); ++j)
-                {
-                    assignSource(row(alignObjsRevComp[j], 1), revComPatternSeq);
-                    int result = globalAlignment(alignObjsRevComp[j], scoringScheme, alignConfig, maxScoreRevComp);//, lDiag, uDiag);
-                    if (maxScoreRevComp < result)
-                    {
-                        maxScoreRevComp = result;
-                        maxIdRevComp = j;
-                    }
-                }
-                if (maxScore > maxScoreRevComp)
-                {
-                    int normScore = maxScore / (length(revComPatternSeq) * 5.0) * 255.0;
-                    if (normScore > options.minScore)
-                        writeLocal(localStream, alignObjs[maxId], patternIds[i], refIds[maxId], cigar, normScore);
-                }
-                else
-                {
-                    int normScore = maxScoreRevComp / (length(revComPatternSeq) * 5.0) * 255.0;
-                    if(normScore > options.minScore)
-                        writeLocal(localStream, alignObjsRevComp[maxIdRevComp], patternIds[i], refIds[maxIdRevComp], cigar, normScore);
+                    maxScore = result;
+                    maxId = j;
                 }
             }
-            SEQAN_OMP_PRAGMA(critical (write_chunk))
-            {   //std::ostringstream testStream;
-                //testStream << counter;
-                //String<char> test = options.outputFileName;
-                //append(test, testStream.str());
-                //std::cerr << test << std::endl;
-                std::ofstream stream(toCString(options.outputFileName), std::ios::out | std::ios::app);
-                stream << localStream.str();
-                stream.close();
+
+            // align backward
+            revComPatternSeq = patternSeqs[i];
+            reverseComplement(revComPatternSeq);
+            maxScoreRevComp = minValue<int>();
+            maxIdRevComp = -1;
+            for (unsigned j = 0; j < length(alignObjsRevComp); ++j)
+            {
+                assignSource(row(alignObjsRevComp[j], 1), revComPatternSeq);
+                int result = globalAlignment(alignObjsRevComp[j], scoringScheme, alignConfig, maxScoreRevComp);
+                if (maxScoreRevComp < result)
+                {
+                    maxScoreRevComp = result;
+                    maxIdRevComp = j;
+                }
+            }
+
+            // check whehter the score for the forward alignment is
+            // better than the one of the backward
+            if (maxScore > maxScoreRevComp)
+            {
+                int normScore = maxScore / (length(revComPatternSeq) * 5.0) * 255.0;
+                if (normScore > options.minScore)
+                    bamFlag = 0;
+                else 
+                    bamFlag = BamFlags::BAM_FLAG_UNMAPPED;
+
+                storeRecord(bamRecords, bamFlag, alignObjs[maxId], patternIds, maxId, normScore, i);
+            }
+            else
+            {
+                int normScore = maxScoreRevComp / (length(revComPatternSeq) * 5.0) * 255.0;
+                if (normScore > options.minScore)
+                    bamFlag = BAM_FLAG_RC;
+                else 
+                    bamFlag = BamFlags::BAM_FLAG_UNMAPPED;
+
+                storeRecord(bamRecords, bamFlag, alignObjsRevComp[maxIdRevComp], patternIds, maxIdRevComp, normScore, i);
             }
         }
+    }
+    sortRecords(bamRecords);
+    adjustFlags(bamRecords);
+
+    String<char, MMap<> > outFile;
+    open(outFile, toCString(options.outputFileName));
+    write(outFile, bamHeader, bamContext, Sam());
+    for (unsigned i = 0; i < length(bamRecords); ++i)
+    {
+        if (!(bamRecords[i].flag & BamFlags::BAM_FLAG_UNMAPPED))
+            write(outFile, bamRecords[i], bamContext, Sam());
     }
 
     return 0;
