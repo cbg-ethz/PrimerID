@@ -67,11 +67,13 @@ struct AppOptions
     int numThreads;
     unsigned bufferSize;
     int minScore;
+    unsigned numDeletion;
 
     AppOptions() :
         numThreads(1),
         bufferSize(100000),
-        minScore(minValue<int>())
+        minScore(minValue<int>()),
+        numDeletion(4)
     {}
 };
 
@@ -117,6 +119,7 @@ parseCommandLine(AppOptions & options, int argc, char const ** argv)
     addOption(parser, ArgParseOption("t", "threads", "The number of threads to be used.", ArgParseArgument::INTEGER));
     addOption(parser, ArgParseOption("b", "bufferSize", "The number of hits stored in a buffer before writing them to disk.", ArgParseArgument::INTEGER));
     addOption(parser, ArgParseOption("s", "minScore", "MinScore of alignment in order to be considered.", ArgParseArgument::INTEGER));
+    addOption(parser, ArgParseOption("d", "deletionCutOff", "# consecutive mutations that exlude the alignment from analysis.", ArgParseArgument::INTEGER));
 
     // Add Examples Section.
     addTextSection(parser, "Examples");
@@ -139,6 +142,7 @@ parseCommandLine(AppOptions & options, int argc, char const ** argv)
     getOptionValue(options.numThreads, parser, "t");
     getOptionValue(options.bufferSize, parser, "b");
     getOptionValue(options.minScore, parser, "s");
+    getOptionValue(options.numDeletion, parser, "d");
 
     return ArgumentParser::PARSE_OK;
 }
@@ -150,7 +154,8 @@ void storeRecord(String<BamAlignmentRecord> & bamRecords,
                 StringSet<String<char> > const & patternIds,
                 unsigned refId,
                 int score,
-                unsigned bamIndex)
+                unsigned bamIndex,
+                unsigned numDeletion)
 {
     int clipBegin = row(align, 1)._array[0];
     int clipEnd = length(row(align, 1)) - row(align, 1)._array[length(row(align, 1)._array) - 1];
@@ -161,7 +166,7 @@ void storeRecord(String<BamAlignmentRecord> & bamRecords,
     getCigarString(bamRecords[bamIndex].cigar,row(align, 0), row(align, 1), 1000);
     String<CigarElement<> > const & cigarRef = bamRecords[bamIndex].cigar;
     for (unsigned i = 0; i < length(cigarRef); ++i)
-        if (cigarRef[i].operation == 'D' && cigarRef[i].count >= 4)
+        if (cigarRef[i].operation == 'D' && cigarRef[i].count >= numDeletion)
             bamRecords[bamIndex].flag = BamFlags::BAM_FLAG_UNMAPPED;
 
     if (bamRecords[bamIndex].flag & BamFlags::BAM_FLAG_UNMAPPED)
@@ -323,7 +328,7 @@ void align(String<BamAlignmentRecord> & bamRecords,
             else 
                 bamFlag = BamFlags::BAM_FLAG_UNMAPPED;
 
-            storeRecord(bamRecords, bamFlag, alignObjs[maxId], patternIds, maxId, normScore, i);
+            storeRecord(bamRecords, bamFlag, alignObjs[maxId], patternIds, maxId, normScore, i, options.numDeletion);
         }
         else
         {
@@ -333,7 +338,7 @@ void align(String<BamAlignmentRecord> & bamRecords,
             else 
                 bamFlag = BamFlags::BAM_FLAG_UNMAPPED;
 
-            storeRecord(bamRecords, bamFlag, alignObjsRevComp[maxIdRevComp], patternIds, maxIdRevComp, normScore, i);
+            storeRecord(bamRecords, bamFlag, alignObjsRevComp[maxIdRevComp], patternIds, maxIdRevComp, normScore, i, options.numDeletion);
         }
     }
 }
