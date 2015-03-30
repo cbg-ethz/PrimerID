@@ -167,15 +167,15 @@ void storeRecord(String<BamAlignmentRecord> & bamRecords,
     if (bamRecords[bamIndex].flag & BamFlags::BAM_FLAG_UNMAPPED)
         return;
 
-    bamRecords[bamIndex].rID = refId;                            // position of ref in header
+    bamRecords[bamIndex].rID = refId;                               // position of ref in header
     bamRecords[bamIndex].qName = patternIds[bamIndex];              //qName
     bamRecords[bamIndex].flag = flag;                               //FLAG
-    bamRecords[bamIndex].beginPos = row(align, 1)._array[0] + 1;    //POS
-    bamRecords[bamIndex].mapQ = 60;                              //MapQual
-    //stream << 0 << "\t";                                            //PNEXT
-    //stream << 0 << "\t";                                            //TLen
+    bamRecords[bamIndex].beginPos = row(align, 1)._array[0];        //POS
+    bamRecords[bamIndex].mapQ = 60;                                 //MapQual
+    //stream << 0 << "\t";                                          //PNEXT
+    //stream << 0 << "\t";                                          //TLen
     bamRecords[bamIndex].seq = source(row(align, 1));               //SEQ
-    //stream << "*" << "\n";                                          //QUAL
+    //stream << "*" << "\n";                                        //QUAL
     bamRecords[bamIndex].tags = "ASi";
     appendRawPod(bamRecords[bamIndex].tags, score);
 }
@@ -206,7 +206,7 @@ trimName(String<char> & readName)
     for (unsigned i = 0; i < length(readName); ++i)
         if (readName[i] == ' ')
         {
-            resize(readName, i + 1);
+            resize(readName, i);
             return;
         }
 }
@@ -225,16 +225,115 @@ void adjustFlags(String<BamAlignmentRecord> & bamRecords)
             }
             else
             {
-                bamRecords[i].flag |= BamFlags::BAM_FLAG_MULTIPLE | BamFlags::BAM_FLAG_ALL_PROPER | BAM_FLAG_FIRST;
-                bamRecords[i].pNext = bamRecords[i+1].rID;
+                bamRecords[i].flag |= BamFlags::BAM_FLAG_MULTIPLE | BamFlags::BAM_FLAG_ALL_PROPER | BAM_FLAG_FIRST; 
+                if (bamRecords[i+1].flag & BamFlags::BAM_FLAG_RC) 
+                    bamRecords[i].flag |= BamFlags::BAM_FLAG_NEXT_RC;
+                bamRecords[i].pNext = bamRecords[i+1].beginPos;
+                bamRecords[i].rNextId = bamRecords[i+1].rID;
+
                 bamRecords[i+1].flag |= BamFlags::BAM_FLAG_MULTIPLE | BamFlags::BAM_FLAG_ALL_PROPER | BAM_FLAG_LAST;
-                bamRecords[i+1].pNext = bamRecords[i].rID;
+                if (bamRecords[i].flag & BamFlags::BAM_FLAG_RC) 
+                    bamRecords[i+1].flag |= BamFlags::BAM_FLAG_NEXT_RC;
+                bamRecords[i+1].pNext = bamRecords[i].beginPos;
+                bamRecords[i+1].rNextId = bamRecords[i].rID;
             }
             ++i;
         }
         else
         {
             bamRecords[i].flag = BamFlags::BAM_FLAG_UNMAPPED;
+        }
+    }
+}
+
+template <typename TRefSeq, 
+          typename TPatternId, 
+          typename TPatternSeq, 
+          typename TScoringScheme, 
+          typename TAlignConfig>
+void align(String<BamAlignmentRecord> & bamRecords, 
+           StringSet<TRefSeq> const & refSeqs,
+           StringSet<TPatternId> const & patternIds,
+           StringSet<TPatternSeq> const & patternSeqs,
+           TScoringScheme const & scoringScheme,
+           TAlignConfig const & alignConfig,
+           AppOptions const & options,
+           unsigned start,
+           unsigned end)
+{
+    unsigned short bamFlag = 0;
+    String<Dna5> revComPatternSeq;
+
+    // Preparing the align Objects
+    String<Align<TRefSeq> > alignObjs, alignObjsRevComp;
+    resize(alignObjs, length(refSeqs));
+    resize(alignObjsRevComp, length(refSeqs));
+
+    int maxScore, maxScoreRevComp, maxId, maxIdRevComp;
+
+    for (unsigned i = 0; i < length(refSeqs); ++i)
+    {
+        resize(rows(alignObjs[i]), 2);
+        resize(rows(alignObjsRevComp[i]), 2);
+        assignSource(row(alignObjs[i], 0), refSeqs[i]);
+        assignSource(row(alignObjsRevComp[i], 0), refSeqs[i]);
+    }
+
+    if (length(patternSeqs) < end)
+        end = length(patternSeqs);
+    for (unsigned i = start; i < end; ++i)
+    {
+        // align forward
+        maxScore = minValue<int>();
+        maxId = -1;
+        for (unsigned j = 0; j < length(alignObjs); ++j)
+        {
+            assignSource(row(alignObjs[j], 1), patternSeqs[i]);
+            int result = globalAlignment(alignObjs[j], scoringScheme, alignConfig, maxScore);
+            if (maxScore < result)
+            {
+                maxScore = result;
+                maxId = j;
+            }
+        }
+
+        // align backward
+        revComPatternSeq = patternSeqs[i];
+        reverseComplement(revComPatternSeq);
+        maxScoreRevComp = minValue<int>();
+        maxIdRevComp = -1;
+        for (unsigned j = 0; j < length(alignObjsRevComp); ++j)
+        {
+            assignSource(row(alignObjsRevComp[j], 1), revComPatternSeq);
+            int result = globalAlignment(alignObjsRevComp[j], scoringScheme, alignConfig, maxScoreRevComp);
+            if (maxScoreRevComp < result)
+            {
+                maxScoreRevComp = result;
+                maxIdRevComp = j;
+            }
+        }
+
+        // check whehter the score for the forward alignment is
+        // better than the one of the backward
+        if (maxScore > maxScoreRevComp)
+        {
+            int normScore = maxScore / (length(revComPatternSeq) * 5.0) * 255.0;
+            if (normScore > options.minScore)
+                bamFlag = 0;
+            else 
+                bamFlag = BamFlags::BAM_FLAG_UNMAPPED;
+
+            storeRecord(bamRecords, bamFlag, alignObjs[maxId], patternIds, maxId, normScore, i);
+        }
+        else
+        {
+            int normScore = maxScoreRevComp / (length(revComPatternSeq) * 5.0) * 255.0;
+            if (normScore > options.minScore)
+                bamFlag = BAM_FLAG_RC;
+            else 
+                bamFlag = BamFlags::BAM_FLAG_UNMAPPED;
+
+            storeRecord(bamRecords, bamFlag, alignObjsRevComp[maxIdRevComp], patternIds, maxIdRevComp, normScore, i);
         }
     }
 }
@@ -302,7 +401,6 @@ int main(int argc, char const ** argv)
     // Pattern
     StringSet<CharString> patternIds;
     StringSet<String<Dna5> > patternSeqs;
-    String<Dna5> revComPatternSeq;
     for (unsigned fileCounter = 0; fileCounter < length(options.patternFileNames); ++fileCounter)
     {
         // reading the fastq files
@@ -323,98 +421,24 @@ int main(int argc, char const ** argv)
     resize(bamRecords, length(patternIds));
 
     // This is the parallelization starting point
-    unsigned readIndex= 0;
-    unsigned short bamFlag = 0;
-    SEQAN_OMP_PRAGMA(parallel num_threads(options.numThreads))
-    for (; ;)
+    for (unsigned currentReadId = 0; currentReadId < length(patternSeqs); currentReadId+=options.bufferSize)
     {
-        unsigned threadReadIndex;
-        SEQAN_OMP_PRAGMA(critical (adjust readIndex))
-        {
-            if (readIndex >= length(patternSeqs))
-                break;
-
-            threadReadIndex = readIndex;
-            readIndex += options.bufferSize;
-        }
-
-        // Preparing the align Objects
-        String<Align<TRefSeq> > alignObjs, alignObjsRevComp;
-        resize(alignObjs, length(refSeqs));
-        resize(alignObjsRevComp, length(refSeqs));
-
-        int maxScore, maxScoreRevComp, maxId, maxIdRevComp;
-
-        for (unsigned i = 0; i < length(refSeqs); ++i)
-        {
-            resize(rows(alignObjs[i]), 2);
-            resize(rows(alignObjsRevComp[i]), 2);
-            assignSource(row(alignObjs[i], 0), refSeqs[i]);
-            assignSource(row(alignObjsRevComp[i], 0), refSeqs[i]);
-        }
-
-        unsigned threadIndexEnd = (length(patternSeqs) < readIndex + options.bufferSize - 1) ? length(patternSeqs) : readIndex + options.bufferSize - 1;
-        for (unsigned i = threadReadIndex; i < threadIndexEnd; ++i)
-        {
-            // align forward
-            maxScore = minValue<int>();
-            maxId = -1;
-            for (unsigned j = 0; j < length(alignObjs); ++j)
-            {
-                assignSource(row(alignObjs[j], 1), patternSeqs[i]);
-                int result = globalAlignment(alignObjs[j], scoringScheme, alignConfig, maxScore);
-                if (maxScore < result)
-                {
-                    maxScore = result;
-                    maxId = j;
-                }
-            }
-
-            // align backward
-            revComPatternSeq = patternSeqs[i];
-            reverseComplement(revComPatternSeq);
-            maxScoreRevComp = minValue<int>();
-            maxIdRevComp = -1;
-            for (unsigned j = 0; j < length(alignObjsRevComp); ++j)
-            {
-                assignSource(row(alignObjsRevComp[j], 1), revComPatternSeq);
-                int result = globalAlignment(alignObjsRevComp[j], scoringScheme, alignConfig, maxScoreRevComp);
-                if (maxScoreRevComp < result)
-                {
-                    maxScoreRevComp = result;
-                    maxIdRevComp = j;
-                }
-            }
-
-            // check whehter the score for the forward alignment is
-            // better than the one of the backward
-            if (maxScore > maxScoreRevComp)
-            {
-                int normScore = maxScore / (length(revComPatternSeq) * 5.0) * 255.0;
-                if (normScore > options.minScore)
-                    bamFlag = 0;
-                else 
-                    bamFlag = BamFlags::BAM_FLAG_UNMAPPED;
-
-                storeRecord(bamRecords, bamFlag, alignObjs[maxId], patternIds, maxId, normScore, i);
-            }
-            else
-            {
-                int normScore = maxScoreRevComp / (length(revComPatternSeq) * 5.0) * 255.0;
-                if (normScore > options.minScore)
-                    bamFlag = BAM_FLAG_RC;
-                else 
-                    bamFlag = BamFlags::BAM_FLAG_UNMAPPED;
-
-                storeRecord(bamRecords, bamFlag, alignObjsRevComp[maxIdRevComp], patternIds, maxIdRevComp, normScore, i);
-            }
-        }
+        align(bamRecords, 
+              refSeqs, 
+              patternIds, 
+              patternSeqs,  
+              scoringScheme, 
+              alignConfig, 
+              options, 
+              currentReadId, 
+              currentReadId+options.bufferSize);
     }
     sortRecords(bamRecords);
     adjustFlags(bamRecords);
 
     String<char, MMap<> > outFile;
-    open(outFile, toCString(options.outputFileName));
+    open(outFile, toCString(options.outputFileName), OPEN_WRONLY);
+    open(outFile, toCString(options.outputFileName));//, OPEN_WRONLY);
     write(outFile, bamHeader, bamContext, Sam());
     for (unsigned i = 0; i < length(bamRecords); ++i)
     {
