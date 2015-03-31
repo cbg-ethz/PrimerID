@@ -11,6 +11,7 @@ clean_files() {
 	rm -rf config.guess
 	rm -rf config.h
 	rm -rf config.h.in
+	rm -rf config.h.in~
 	rm -rf config.log
 	rm -rf config.status
 	rm -rf config.sub
