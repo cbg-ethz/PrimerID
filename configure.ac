@@ -1,11 +1,11 @@
 dnl Initialise Autoconf
 AC_PREREQ([2.69])
 AC_INIT(
-	[PIDalyser],
+	[PIDalyse],
 	[0.1],
 	[david.seifert@bsse.ethz.ch],
-	[pidalyser],
-	[http://www.cbg.ethz.ch/software/pidalyser])
+	[pidalyse],
+	[http://www.cbg.ethz.ch/software/pidalyse])
 AC_CONFIG_HEADERS([config.h])
 AC_CONFIG_SRCDIR([src/main.cpp])
 AC_CONFIG_MACRO_DIR([m4])
@@ -115,6 +115,13 @@ PKG_CHECK_MODULES([GSL], [gsl])
 
 
 dnl ===============
+dnl Check for Boost
+dnl ===============
+AX_BOOST_BASE([1.50], [], [AC_MSG_ERROR([could not find a suitable boost installation.])])
+
+
+
+dnl ===============
 dnl Check for Seqan
 dnl ===============
 AC_ARG_VAR([SEQAN_INCLUDEDIR], [contains the include path to the Seqan headers])
@@ -132,7 +139,6 @@ AC_LINK_IFELSE([
 	[AC_MSG_ERROR([could not find seqan headers! If the seqan headers are not located within the compiler's default search path, specify them with the SEQAN_INCLUDEDIR variable to the configure script.])]
 )
 CPPFLAGS="$save_cppflags"
-AX_OPENMP([AC_SUBST(OPENMP_CXXFLAGS)], [AC_MSG_WARN([OpenMP support is unavailable - pidalign will only run single-threaded])])
 
 
 

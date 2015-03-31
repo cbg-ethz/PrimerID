@@ -4,11 +4,11 @@
  * This file is part of PIDalign
  *
  * PIDalign is free software: you can redistribute it and/or modify it under
- * the terms of the GNU General Public License as published by the Free Software
- * Foundation, either version 3 of the License, or any later version.
+ * the terms of the GNU General Public License as published by the Free
+ * Software Foundation, either version 3 of the License, or any later version.
  *
- * PIDalign is distributed in the hope that it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+ * PIDalign is distributed in the hope that it will be useful, but WITHOUT ANY
+ * WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  * FOR A PARTICULAR PURPOSE. See the GNU General Public License for more
  * details.
  *
@@ -29,54 +29,53 @@
 #include <iostream>
 #include <fstream>
 #include <algorithm>
+#include <atomic>
+#include <cstdint>
+#include <thread>
+#include <chrono>
+
+#include <boost/progress.hpp>
+#include <src/threadpool11/threadpool11.hpp>
 
 using namespace seqan;
+
+uint32_t total;
+std::atomic_uint_fast32_t progress(0);
+
+// stats
+std::atomic_uint_fast32_t discard_score(0);
+std::atomic_uint_fast32_t discard_del(0);
+uint32_t discard_bad_mate(0);
+uint32_t discard_singles(0);
+uint32_t accepted(0);
 
 // ==========================================================================
 // Classes
 // ==========================================================================
 
 // --------------------------------------------------------------------------
-// Class SamStruct
-// --------------------------------------------------------------------------
-
-//struct SamStruct
-//{
-//    String<char> readName;
-//    String<char> contigName;
-//    String<CigarElement<> > cigar;
-//    String<char> seq;
-//    unsigned pos;
-//    int score;
-//};
-
-// --------------------------------------------------------------------------
 // Class AppOptions
 // --------------------------------------------------------------------------
 
 // This struct stores the options from the command line.
-//
-// You might want to rename this to reflect the name of your app.
 
-struct AppOptions
-{
-    // The first (and only) argument of the program is stored here.
+struct AppOptions {
     StringSet<CharString> patternFileNames;
     CharString refFileName;
     CharString outputFileName;
-    int numThreads;
-    unsigned bufferSize;
+    uint32_t numThreads;
+    uint32_t blockSize;
     int minScore;
-    unsigned numDeletion;
+    uint32_t numDeletion;
 
-    AppOptions() :
-        numThreads(1),
-        bufferSize(100000),
-        minScore(minValue<int>()),
-        numDeletion(4)
-    {}
+    AppOptions()
+        : numThreads(std::thread::hardware_concurrency())
+        , blockSize(500)
+        , minScore(minValue<int>())
+        , numDeletion(4)
+    {
+    }
 };
-
 
 // ==========================================================================
 // Functions
@@ -87,17 +86,17 @@ struct AppOptions
 // --------------------------------------------------------------------------
 
 ArgumentParser::ParseResult
-parseCommandLine(AppOptions & options, int argc, char const ** argv)
+parseCommandLine(AppOptions& options, int argc, char const** argv)
 {
     // Setup ArgumentParser.
     ArgumentParser parser("pidalign");
     // Set short description, version, and date.
-    setShortDescription(parser, "Needleman-Wunsch (Gotoh variant) aligner that produces a SAM output");
+    setShortDescription(parser, "Needleman-Wunsch (Gotoh variant) aligner with output in SAM");
     setVersion(parser, "0.1");
-    setDate(parser, "Februrary 2015");
+    setDate(parser, "March 2015");
 
     // Define usage line and long description.
-    addUsageLine(parser, "[\\fIOPTIONS\\fP] \\fB<R1.fastq>\\fP [\\fB<R2.fastq>\\fP]");
+    addUsageLine(parser, "[\\fIOPTIONS\\fP] \\fB<R1.fastq>\\fP \\fB<R2.fastq>\\fP");
     addDescription(parser, "pidalign performs a full-exhaustive Needleman-Wunsch alignment with affine gap costs. For performance reasons, pidalign is multithreaded, and it is generally advised to use the -t option to max out the parallelization.");
 
     addOption(parser, ArgParseOption("r1", "reads1FileName", "Name of the file containg the first mate pair reads.", ArgParseArgument::INPUT_FILE, "IN"));
@@ -117,14 +116,14 @@ parseCommandLine(AppOptions & options, int argc, char const ** argv)
     setValidValues(parser, "o", "sam");
 
     addOption(parser, ArgParseOption("t", "threads", "The number of threads to be used.", ArgParseArgument::INTEGER));
-    addOption(parser, ArgParseOption("b", "bufferSize", "The number of hits stored in a buffer before writing them to disk.", ArgParseArgument::INTEGER));
+    addOption(parser, ArgParseOption("b", "blockSize", "Block size of per thread processing.", ArgParseArgument::INTEGER));
     addOption(parser, ArgParseOption("s", "minScore", "MinScore of alignment in order to be considered.", ArgParseArgument::INTEGER));
-    addOption(parser, ArgParseOption("d", "deletionCutOff", "# consecutive mutations that exlude the alignment from analysis.", ArgParseArgument::INTEGER));
+    addOption(parser, ArgParseOption("d", "deletionCutOff", "Maximum # consecutive deletions/gaps that are allowed.", ArgParseArgument::INTEGER));
 
     // Add Examples Section.
     addTextSection(parser, "Examples");
     addListItem(parser, "\\fBpidalign\\fP \\fB-r\\fP \\fIreference.fasta\\fP\\fP \\fB-o\\fP \\fIoutput.sam\\fP \\fP\\fIR*.fastq\\fP",
-                "Use \\fIreference.fasta\\fP to align \\fP\\fIR*.fastq\\fP with the SAM alignment in \\fIoutput.sam\\fP.");
+        "Use \\fIreference.fasta\\fP to align \\fP\\fIR*.fastq\\fP with the SAM alignment in \\fIoutput.sam\\fP.");
 
     // Parse command line.
     ArgumentParser::ParseResult res = parse(parser, argc, argv);
@@ -140,7 +139,7 @@ parseCommandLine(AppOptions & options, int argc, char const ** argv)
     getOptionValue(options.refFileName, parser, "ref");
     getOptionValue(options.outputFileName, parser, "o");
     getOptionValue(options.numThreads, parser, "t");
-    getOptionValue(options.bufferSize, parser, "b");
+    getOptionValue(options.blockSize, parser, "b");
     getOptionValue(options.minScore, parser, "s");
     getOptionValue(options.numDeletion, parser, "d");
 
@@ -148,14 +147,14 @@ parseCommandLine(AppOptions & options, int argc, char const ** argv)
 }
 
 template <typename TAlign>
-void storeRecord(String<BamAlignmentRecord> & bamRecords,
-                unsigned short flag,
-                TAlign & align,
-                StringSet<String<char> > const & patternIds,
-                unsigned refId,
-                int score,
-                unsigned bamIndex,
-                unsigned numDeletion)
+void storeRecord(String<BamAlignmentRecord>& bamRecords,
+    uint16_t flag,
+    TAlign& align,
+    StringSet<String<char> > const& patternIds,
+    uint32_t refId,
+    int score,
+    uint32_t bamIndex,
+    uint32_t numDeletion)
 {
     int clipBegin = row(align, 1)._array[0];
     int clipEnd = length(row(align, 1)) - row(align, 1)._array[length(row(align, 1)._array) - 1];
@@ -163,29 +162,40 @@ void storeRecord(String<BamAlignmentRecord> & bamRecords,
     setClippedBeginPosition(row(align, 1), clipBegin);
     setClippedEndPosition(row(align, 0), clipEnd);
     setClippedEndPosition(row(align, 1), clipEnd);
-    getCigarString(bamRecords[bamIndex].cigar,row(align, 0), row(align, 1), 1000);
-    String<CigarElement<> > const & cigarRef = bamRecords[bamIndex].cigar;
-    for (unsigned i = 0; i < length(cigarRef); ++i)
-        if (cigarRef[i].operation == 'D' && cigarRef[i].count >= numDeletion)
-            bamRecords[bamIndex].flag = BamFlags::BAM_FLAG_UNMAPPED;
 
+    getCigarString(bamRecords[bamIndex].cigar, row(align, 0), row(align, 1), 1000);
+    String<CigarElement<> > const& cigarRef = bamRecords[bamIndex].cigar;
+    bool max_deletion = false;
+    for (const auto& i : cigarRef) {
+        if ((i.operation == 'D') && (i.count >= numDeletion)) {
+            max_deletion = true;
+            break;
+        }
+    }
+
+    if (((flag & BamFlags::BAM_FLAG_UNMAPPED) == 0) && (max_deletion)) {
+        ++discard_del;
+        flag = BamFlags::BAM_FLAG_UNMAPPED;
+    }
+
+    bamRecords[bamIndex].flag = flag;
     if (bamRecords[bamIndex].flag & BamFlags::BAM_FLAG_UNMAPPED)
         return;
 
-    bamRecords[bamIndex].rID = refId;                               // position of ref in header
-    bamRecords[bamIndex].qName = patternIds[bamIndex];              //qName
-    bamRecords[bamIndex].flag = flag;                               //FLAG
-    bamRecords[bamIndex].beginPos = row(align, 1)._array[0];        //POS
-    bamRecords[bamIndex].mapQ = 60;                                 //MapQual
+    bamRecords[bamIndex].rID = refId; // position of ref in header
+    bamRecords[bamIndex].qName = patternIds[bamIndex]; //qName
+    //bamRecords[bamIndex].flag = flag;                               //FLAG
+    bamRecords[bamIndex].beginPos = row(align, 1)._array[0]; //POS
+    bamRecords[bamIndex].mapQ = 60; //MapQual
     //stream << 0 << "\t";                                          //PNEXT
     //stream << 0 << "\t";                                          //TLen
-    bamRecords[bamIndex].seq = source(row(align, 1));               //SEQ
+    bamRecords[bamIndex].seq = source(row(align, 1)); //SEQ
     //stream << "*" << "\n";                                        //QUAL
     bamRecords[bamIndex].tags = "ASi";
     appendRawPod(bamRecords[bamIndex].tags, score);
 }
 
-bool compRecords(BamAlignmentRecord const & left, BamAlignmentRecord const & right)
+bool compRecords(BamAlignmentRecord const& left, BamAlignmentRecord const& right)
 {
     if (left.qName < right.qName)
         return true;
@@ -199,74 +209,93 @@ bool compRecords(BamAlignmentRecord const & left, BamAlignmentRecord const & rig
     return false;
 }
 
-void
-sortRecords(String<BamAlignmentRecord> & bamRecords)
+void sortRecords(String<BamAlignmentRecord>& bamRecords)
 {
     std::sort(begin(bamRecords), end(bamRecords), compRecords);
 }
 
-void
-trimName(String<char> & readName)
+void trimName(String<char>& readName)
 {
-    for (unsigned i = 0; i < length(readName); ++i)
-        if (readName[i] == ' ')
-        {
+    for (uint32_t i = 0; i < length(readName); ++i) {
+        if (readName[i] == ' ') {
             resize(readName, i);
             return;
         }
+    }
 }
 
-void adjustFlags(String<BamAlignmentRecord> & bamRecords)
+void adjustFlags(String<BamAlignmentRecord>& bamRecords)
 {
-    for (unsigned i = 0; i < length(bamRecords) - 1; ++i)
-    {
-        if (bamRecords[i].qName == bamRecords[i+1].qName)
-        {
-            if ( (bamRecords[i].flag & BamFlags::BAM_FLAG_UNMAPPED) || 
-                    (bamRecords[i+1].flag & BamFlags::BAM_FLAG_UNMAPPED) )
-            {
-                bamRecords[i].flag = BamFlags::BAM_FLAG_UNMAPPED;
-                bamRecords[i+1].flag = BamFlags::BAM_FLAG_UNMAPPED;
-            }
-            else
-            {
-                bamRecords[i].flag |= BamFlags::BAM_FLAG_MULTIPLE | BamFlags::BAM_FLAG_ALL_PROPER | BAM_FLAG_FIRST; 
-                if (bamRecords[i+1].flag & BamFlags::BAM_FLAG_RC) 
-                    bamRecords[i].flag |= BamFlags::BAM_FLAG_NEXT_RC;
-                bamRecords[i].pNext = bamRecords[i+1].beginPos;
-                bamRecords[i].rNextId = bamRecords[i+1].rID;
+    uint16_t bad_reads;
+    for (uint32_t i = 0; i < length(bamRecords) - 1; ++i) {
+        if (bamRecords[i].qName == bamRecords[i + 1].qName) {
+            bad_reads = (bamRecords[i].flag & BamFlags::BAM_FLAG_UNMAPPED) + (bamRecords[i + 1].flag & BamFlags::BAM_FLAG_UNMAPPED);
 
-                bamRecords[i+1].flag |= BamFlags::BAM_FLAG_MULTIPLE | BamFlags::BAM_FLAG_ALL_PROPER | BAM_FLAG_LAST;
-                if (bamRecords[i].flag & BamFlags::BAM_FLAG_RC) 
-                    bamRecords[i+1].flag |= BamFlags::BAM_FLAG_NEXT_RC;
-                bamRecords[i+1].pNext = bamRecords[i].beginPos;
-                bamRecords[i+1].rNextId = bamRecords[i].rID;
+            if (bad_reads) {
+                bamRecords[i].flag = BamFlags::BAM_FLAG_UNMAPPED;
+                bamRecords[i + 1].flag = BamFlags::BAM_FLAG_UNMAPPED;
+
+                if (bad_reads == BamFlags::BAM_FLAG_UNMAPPED) {
+                    ++discard_bad_mate;
+                }
+            }
+            else {
+                accepted += 2;
+
+                // left read
+                bamRecords[i].flag |= BamFlags::BAM_FLAG_MULTIPLE | BamFlags::BAM_FLAG_ALL_PROPER | BAM_FLAG_FIRST;
+                if (bamRecords[i + 1].flag & BamFlags::BAM_FLAG_RC)
+                    bamRecords[i].flag |= BamFlags::BAM_FLAG_NEXT_RC;
+                bamRecords[i].pNext = bamRecords[i + 1].beginPos;
+                bamRecords[i].rNextId = bamRecords[i + 1].rID;
+
+                // right read
+                bamRecords[i + 1].flag |= BamFlags::BAM_FLAG_MULTIPLE | BamFlags::BAM_FLAG_ALL_PROPER | BAM_FLAG_LAST;
+                if (bamRecords[i].flag & BamFlags::BAM_FLAG_RC)
+                    bamRecords[i + 1].flag |= BamFlags::BAM_FLAG_NEXT_RC;
+                bamRecords[i + 1].pNext = bamRecords[i].beginPos;
+                bamRecords[i + 1].rNextId = bamRecords[i].rID;
             }
             ++i;
         }
-        else
-        {
+        else {
+            if ((bamRecords[i].flag & BamFlags::BAM_FLAG_UNMAPPED) == 0) {
+                ++discard_singles;
+            }
             bamRecords[i].flag = BamFlags::BAM_FLAG_UNMAPPED;
         }
     }
 }
 
-template <typename TRefSeq, 
-          typename TPatternId, 
-          typename TPatternSeq, 
-          typename TScoringScheme, 
-          typename TAlignConfig>
-void align(String<BamAlignmentRecord> & bamRecords, 
-           StringSet<TRefSeq> const & refSeqs,
-           StringSet<TPatternId> const & patternIds,
-           StringSet<TPatternSeq> const & patternSeqs,
-           TScoringScheme const & scoringScheme,
-           TAlignConfig const & alignConfig,
-           AppOptions const & options,
-           unsigned start,
-           unsigned end)
+void show_progress()
 {
-    unsigned short bamFlag = 0;
+    boost::progress_display show_progress(total);
+    uint32_t now = 0, previous = 0;
+
+    while (progress != total) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        now = progress.load();
+        show_progress += (now - previous);
+        previous = now;
+    }
+}
+
+template <typename TRefSeq,
+    typename TPatternId,
+    typename TPatternSeq,
+    typename TScoringScheme,
+    typename TAlignConfig>
+void align(String<BamAlignmentRecord>& bamRecords,
+    StringSet<TRefSeq> const& refSeqs,
+    StringSet<TPatternId> const& patternIds,
+    StringSet<TPatternSeq> const& patternSeqs,
+    TScoringScheme const& scoringScheme,
+    TAlignConfig const& alignConfig,
+    AppOptions const& options,
+    uint32_t start,
+    uint32_t end)
+{
+    uint16_t bamFlag = 0;
     String<Dna5> revComPatternSeq;
 
     // Preparing the align Objects
@@ -276,8 +305,7 @@ void align(String<BamAlignmentRecord> & bamRecords,
 
     int maxScore, maxScoreRevComp, maxId, maxIdRevComp;
 
-    for (unsigned i = 0; i < length(refSeqs); ++i)
-    {
+    for (uint32_t i = 0; i < length(refSeqs); ++i) {
         resize(rows(alignObjs[i]), 2);
         resize(rows(alignObjsRevComp[i]), 2);
         assignSource(row(alignObjs[i], 0), refSeqs[i]);
@@ -286,17 +314,17 @@ void align(String<BamAlignmentRecord> & bamRecords,
 
     if (length(patternSeqs) < end)
         end = length(patternSeqs);
-    for (unsigned i = start; i < end; ++i)
-    {
+
+    progress += (end - start);
+
+    for (uint32_t i = start; i < end; ++i) {
         // align forward
         maxScore = minValue<int>();
         maxId = -1;
-        for (unsigned j = 0; j < length(alignObjs); ++j)
-        {
+        for (uint32_t j = 0; j < length(alignObjs); ++j) {
             assignSource(row(alignObjs[j], 1), patternSeqs[i]);
             int result = globalAlignment(alignObjs[j], scoringScheme, alignConfig, maxScore);
-            if (maxScore < result)
-            {
+            if (maxScore < result) {
                 maxScore = result;
                 maxId = j;
             }
@@ -307,36 +335,37 @@ void align(String<BamAlignmentRecord> & bamRecords,
         reverseComplement(revComPatternSeq);
         maxScoreRevComp = minValue<int>();
         maxIdRevComp = -1;
-        for (unsigned j = 0; j < length(alignObjsRevComp); ++j)
-        {
+        for (uint32_t j = 0; j < length(alignObjsRevComp); ++j) {
             assignSource(row(alignObjsRevComp[j], 1), revComPatternSeq);
             int result = globalAlignment(alignObjsRevComp[j], scoringScheme, alignConfig, maxScoreRevComp);
-            if (maxScoreRevComp < result)
-            {
+            if (maxScoreRevComp < result) {
                 maxScoreRevComp = result;
                 maxIdRevComp = j;
             }
         }
 
-        // check whehter the score for the forward alignment is
-        // better than the one of the backward
-        if (maxScore > maxScoreRevComp)
-        {
+        // check which score is higher and choose the associated alignment
+        if (maxScore > maxScoreRevComp) {
             int normScore = maxScore / (length(revComPatternSeq) * 5.0) * 255.0;
-            if (normScore > options.minScore)
+            if (normScore > options.minScore) {
                 bamFlag = 0;
-            else 
+            }
+            else {
+                ++discard_score;
                 bamFlag = BamFlags::BAM_FLAG_UNMAPPED;
+            }
 
             storeRecord(bamRecords, bamFlag, alignObjs[maxId], patternIds, maxId, normScore, i, options.numDeletion);
         }
-        else
-        {
+        else {
             int normScore = maxScoreRevComp / (length(revComPatternSeq) * 5.0) * 255.0;
-            if (normScore > options.minScore)
+            if (normScore > options.minScore) {
                 bamFlag = BAM_FLAG_RC;
-            else 
+            }
+            else {
+                ++discard_score;
                 bamFlag = BamFlags::BAM_FLAG_UNMAPPED;
+            }
 
             storeRecord(bamRecords, bamFlag, alignObjsRevComp[maxIdRevComp], patternIds, maxIdRevComp, normScore, i, options.numDeletion);
         }
@@ -349,7 +378,7 @@ void align(String<BamAlignmentRecord> & bamRecords,
 
 // Program entry point.
 
-int main(int argc, char const ** argv)
+int main(int argc, char const** argv)
 {
     typedef String<Iupac> TRefSeq;
 
@@ -363,9 +392,11 @@ int main(int argc, char const ** argv)
     // were errors and 0 if there were none.
     if (res != ArgumentParser::PARSE_OK)
         return res == ArgumentParser::PARSE_ERROR;
-
-    std::cout << "pidalign\n"
-              << "========\n\n";
+    std::cout << "pidalign 0.1\n";
+    std::cout << "Parameters:  -t: " << options.numThreads << '\n';
+    std::cout << "             -b: " << options.blockSize << '\n';
+    std::cout << "             -s: " << options.minScore << '\n';
+    std::cout << "             -d: " << options.numDeletion << '\n';
 
     // Reference
     SeqFileIn seqInRef(toCString(options.refFileName));
@@ -376,7 +407,7 @@ int main(int argc, char const ** argv)
     // Preparation of header of resulting sam file
     //std::ofstream stream(toCString(options.outputFileName), std::ios::out | std::ios::app);
     //stream << "@HD\tVN:1.5\tSO:coordinate\n";
-    //for (unsigned i = 0; i < length(refSeqs); ++i)
+    //for (uint32_t i = 0; i < length(refSeqs); ++i)
     //  stream << "@SQ\tSN:" << refIds[i] << "\tLN:" << length(refSeqs[i]) << "\n";
     //stream.close();
     BamHeader bamHeader;
@@ -387,8 +418,7 @@ int main(int argc, char const ** argv)
     StringSet<String<char> > nameStore;
     NameStoreCache<StringSet<String<char> > > nameStoreCache(nameStore);
     BamIOContext<> bamContext(nameStore, nameStoreCache);
-    for (unsigned i = 0; i < length(refSeqs); ++i)
-    {
+    for (unsigned i = 0; i < length(refSeqs); ++i) {
         clear(bamHeaderRecord);
         bamHeaderRecord.type = BAM_HEADER_REFERENCE;
         setTagValue("SN", refIds[i], bamHeaderRecord);
@@ -404,15 +434,14 @@ int main(int argc, char const ** argv)
     AlignConfig<true, false, false, true> alignConfig;
 
     // Pattern
+    std::cout << "Reading input\n";
     StringSet<CharString> patternIds;
     StringSet<String<Dna5> > patternSeqs;
-    for (unsigned fileCounter = 0; fileCounter < length(options.patternFileNames); ++fileCounter)
-    {
+    for (const auto& i : options.patternFileNames) {
         // reading the fastq files
-        SeqFileIn seqInPattern(toCString(options.patternFileNames[fileCounter]));
-        while (!atEnd(seqInPattern))
-        {
-            unsigned newLength = length(patternIds) + 1;
+        SeqFileIn seqInPattern(toCString(i));
+        while (!atEnd(seqInPattern)) {
+            uint32_t newLength = length(patternIds) + 1;
             resize(patternIds, newLength);
             resize(patternSeqs, newLength);
             readRecord(back(patternIds), back(patternSeqs), seqInPattern);
@@ -422,36 +451,55 @@ int main(int argc, char const ** argv)
     }
 
     // prepare the resulting bam record
+    total = length(patternIds);
     String<BamAlignmentRecord> bamRecords;
-    resize(bamRecords, length(patternIds));
+    resize(bamRecords, total);
 
-    // This is the parallelization starting point
-    for (unsigned currentReadId = 0; currentReadId < length(patternSeqs); currentReadId+=options.bufferSize)
-    {
-        align(bamRecords, 
-              refSeqs, 
-              patternIds, 
-              patternSeqs,  
-              scoringScheme, 
-              alignConfig, 
-              options, 
-              currentReadId, 
-              currentReadId+options.bufferSize);
+    // parallelized alignment
+    std::cout << "Aligning reads\n";
+    std::thread progress_bar_thread(show_progress);
+    threadpool11::Pool pool(options.numThreads);
+    uint32_t blockSize = options.blockSize;
+
+    auto start = std::chrono::high_resolution_clock::now();
+    for (uint32_t currentReadId = 0; currentReadId < total; currentReadId += blockSize) {
+        pool.postWork<void>([&, currentReadId, blockSize] {
+				   align(bamRecords, refSeqs, patternIds, patternSeqs, scoringScheme, alignConfig, options, currentReadId, currentReadId + blockSize);
+        });
     }
+    progress_bar_thread.join();
+    pool.waitAll();
+    pool.joinAll();
+
+    auto end = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::seconds>(end - start);
+    std::cout << "Elapsed time: " << duration.count() << " seconds\n";
+
+    // post-alignment processing
+    std::cout << "\nPost-processing\n";
     sortRecords(bamRecords);
     adjustFlags(bamRecords);
 
+    // output
+    std::cout << "Writing output\n\n";
     String<char, MMap<> > outFile;
     open(outFile, toCString(options.outputFileName), OPEN_WRONLY);
-    open(outFile, toCString(options.outputFileName));//, OPEN_WRONLY);
+    open(outFile, toCString(options.outputFileName)); //, OPEN_WRONLY);
     write(outFile, bamHeader, bamContext, Sam());
-    for (unsigned i = 0; i < length(bamRecords); ++i)
-    {
-        if (!(bamRecords[i].flag & BamFlags::BAM_FLAG_UNMAPPED))
-            write(outFile, bamRecords[i], bamContext, Sam());
+    for (const auto& i : bamRecords) {
+        if (!(i.flag & BamFlags::BAM_FLAG_UNMAPPED)) {
+            write(outFile, i, bamContext, Sam());
+        }
     }
+
+    // statistics
+    std::cout << std::fixed << std::setprecision(1);
+    std::cout << "          Input Reads: " << total << "\n";
+    std::cout << "Discarded (bad score): " << discard_score << " (" << static_cast<double>(discard_score) / total * 100 << "%)\n";
+    std::cout << "Discarded (deletions): " << discard_del << " (" << static_cast<double>(discard_del) / total * 100 << "%)\n";
+    std::cout << " Discarded (bad mate): " << discard_bad_mate << " (" << static_cast<double>(discard_bad_mate) / total * 100 << "%)\n";
+    std::cout << "  Discarded (singles): " << discard_singles << " (" << static_cast<double>(discard_singles) / total * 100 << "%)\n";
+    std::cout << "       Accepted Reads: " << accepted << " (" << static_cast<double>(accepted) / total * 100 << "%)\n";
 
     return 0;
 }
-
-
