@@ -28,17 +28,18 @@ clean_files() {
 	rm -rf src/.deps/
 	rm -rf src/.dirstamp
 	rm -rf src/.libs/
-	rm -rf src/alignment.o
-	rm -rf src/main.o
+	
+	rm -rf src/pidalyse-alignment.o
+	rm -rf src/pidalyse-main.o
 	rm -rf src/pidalign-pidalign.o
-	rm -rf src/proper_read.o
-	rm -rf src/reference.o
+	rm -rf src/pidalyse-proper_read.o
+	rm -rf src/pidalyse-reference.o
 
 	rm -rf src/threadpool11/.deps/
 	rm -rf src/threadpool11/.dirstamp
 	rm -rf src/threadpool11/.libs/
-	rm -rf src/threadpool11/pool.o
-	rm -rf src/threadpool11/worker.o
+	rm -rf src/threadpool11/pidalign-pool.o
+	rm -rf src/threadpool11/pidalign-worker.o
 
 	# Tarballs
 	rm -rf pidalyse-0.1.tar.bz2
