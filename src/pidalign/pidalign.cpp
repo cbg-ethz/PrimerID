@@ -24,7 +24,7 @@
 #include <seqan/bam_io.h>
 #include <seqan/modifier.h>
 
-#include <src/ednafull.hpp>
+#include "ednafull.hpp"
 
 #include <iostream>
 #include <fstream>
@@ -35,7 +35,7 @@
 #include <chrono>
 
 #include <boost/progress.hpp>
-#include <src/threadpool11/threadpool11.hpp>
+#include <src/pidalign/threadpool11/threadpool11.hpp>
 
 using namespace seqan;
 
@@ -164,6 +164,9 @@ void storeRecord(String<BamAlignmentRecord>& bamRecords,
     setClippedEndPosition(row(align, 1), clipEnd);
 
     getCigarString(bamRecords[bamIndex].cigar, row(align, 0), row(align, 1), 1000);
+		
+		std::cout << length(row(align, 1)) << '\n';
+		
     String<CigarElement<> > const& cigarRef = bamRecords[bamIndex].cigar;
     bool max_deletion = false;
     for (const auto& i : cigarRef) {

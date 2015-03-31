@@ -1,42 +1,36 @@
 ACLOCAL_AMFLAGS = -I m4
 
-MAINTAINERCLEANFILES = Makefile Makefile.in \
-	aclocal.m4 autom4te.cache/ \
-	config.h config.h.in config.log config.status configure \
-	depcomp install-sh missing \
-	pidalyse src/.deps/ src/.libs/ src/.dirstamp stamp-h1
-
 bin_PROGRAMS = pidalyse pidalign
 
 # pidalyse
 pidalyse_includes = \
-	src/alignment.hpp \
-	src/kmeans.hpp \
-	src/prob_cycle.hpp \
-	src/proper_read.hpp \
-	src/reference.hpp \
-	src/statistics.hpp
+	src/pidalyse/alignment.hpp \
+	src/pidalyse/kmeans.hpp \
+	src/pidalyse/prob_cycle.hpp \
+	src/pidalyse/proper_read.hpp \
+	src/pidalyse/reference.hpp \
+	src/pidalyse/statistics.hpp
 pidalyse_SOURCES = $(pidalyse_includes) \
-	src/alignment.cpp \
-	src/main.cpp \
-	src/proper_read.cpp \
-	src/reference.cpp
+	src/pidalyse/alignment.cpp \
+	src/pidalyse/main.cpp \
+	src/pidalyse/proper_read.cpp \
+	src/pidalyse/reference.cpp
 pidalyse_CXXFLAGS = $(GSL_CFLAGS)
 pidalyse_LDADD = $(GSL_LIBS)
 
 # pidalign
 libthreadpool11_sources = \
-	src/threadpool11/pool.hpp \
-	src/threadpool11/threadpool11.hpp \
-	src/threadpool11/utility.hpp \
-	src/threadpool11/worker.hpp \
-	src/threadpool11/pool.cpp \
-	src/threadpool11/worker.cpp
+	src/pidalign/threadpool11/pool.hpp \
+	src/pidalign/threadpool11/threadpool11.hpp \
+	src/pidalign/threadpool11/utility.hpp \
+	src/pidalign/threadpool11/worker.hpp \
+	src/pidalign/threadpool11/pool.cpp \
+	src/pidalign/threadpool11/worker.cpp
 
 pidalign_includes = \
-	src/ednafull.hpp
+	src/pidalign/ednafull.hpp
 pidalign_SOURCES = $(pidalign_includes) $(libthreadpool11_sources) \
-	src/pidalign.cpp
+	src/pidalign/pidalign.cpp
 pidalign_CPPFLAGS = \
 	-I$(SEQAN_INCLUDEDIR) $(BOOST_CPPFLAGS)
 pidalign_LDFLAGS = \

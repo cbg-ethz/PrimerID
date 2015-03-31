@@ -4,7 +4,7 @@
 #include <fstream>
 #include <cmath>
 
-#include <src/reference.hpp>
+#include "reference.hpp"
 
 // record
 record::record(const std::string& _DNA, const std::string& _name)

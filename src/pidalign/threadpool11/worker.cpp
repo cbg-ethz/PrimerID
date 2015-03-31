@@ -18,8 +18,8 @@ This file is part of threadpool11.
     along with threadpool11.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#include <src/threadpool11/pool.hpp>
-#include <src/threadpool11/worker.hpp>
+#include "pool.hpp"
+#include "worker.hpp"
 
 #include <boost/lockfree/queue.hpp>
 

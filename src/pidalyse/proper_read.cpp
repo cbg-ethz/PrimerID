@@ -3,7 +3,7 @@
 #include <functional>
 #include <exception>
 
-#include <src/proper_read.hpp>
+#include "proper_read.hpp"
 
 hamming_return_type
 hamming_distance(const std::string& sA, const std::string& sB)

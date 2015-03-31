@@ -3,7 +3,7 @@
 #include <fstream>
 #include <cstddef>
 
-#include <src/alignment.hpp>
+#include "alignment.hpp"
 
 #include <boost/algorithm/string.hpp>
 #include <boost/math/tools/minima.hpp>
@@ -11,8 +11,8 @@
 #include <gsl/gsl_randist.h>
 
 // custom functors
-#include <src/prob_cycle.hpp>
-#include <src/kmeans.hpp>
+#include "prob_cycle.hpp"
+#include "kmeans.hpp"
 
 // alignment
 struct SAMentry

@@ -3,8 +3,8 @@
 #include <cmath>
 #include <fstream>
 
-#include <src/reference.hpp>
-#include <src/alignment.hpp>
+#include "reference.hpp"
+#include "alignment.hpp"
 
 #include <getopt.h>
 static struct option long_options[] = {

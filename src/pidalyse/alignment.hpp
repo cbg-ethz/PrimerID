@@ -9,9 +9,9 @@
 #include <cstddef>
 #include <cstdint>
 
-#include <src/reference.hpp>
-#include <src/proper_read.hpp>
-#include <src/statistics.hpp>
+#include "reference.hpp"
+#include "proper_read.hpp"
+#include "statistics.hpp"
 
 class alignment
 {
