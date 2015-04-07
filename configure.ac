@@ -9,8 +9,6 @@ AC_INIT(
 AC_CONFIG_HEADERS([config.h])
 AC_CONFIG_SRCDIR([src/pidalyse/main.cpp])
 AC_LANG([C++])
-AX_COMPILER_VENDOR
-AX_COMPILER_VERSION
 
 
 
@@ -47,10 +45,11 @@ AC_ARG_ENABLE([debug],
 
 
 
-
 dnl =======================================
 dnl Check for standard headers and programs
 dnl =======================================
+AX_COMPILER_VENDOR
+AX_COMPILER_VERSION
 AC_PROG_SED
 AC_PROG_CXX
 AC_CHECK_HEADERS([cstdint])
