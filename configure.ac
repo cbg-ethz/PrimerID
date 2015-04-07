@@ -5,11 +5,12 @@ AC_INIT(
 	[0.1],
 	[david.seifert@bsse.ethz.ch],
 	[pidalyse],
-	[http://www.cbg.ethz.ch/software/pidalyse])
+	[https://github.com/SoapZA/PrimerID])
 AC_CONFIG_HEADERS([config.h])
 AC_CONFIG_SRCDIR([src/pidalyse/main.cpp])
-AC_CONFIG_MACRO_DIR([m4])
 AC_LANG([C++])
+AX_COMPILER_VENDOR
+AX_COMPILER_VERSION
 
 
 
@@ -41,7 +42,7 @@ AS_IF(
 AC_MSG_RESULT([$enable_ldflags_setting])
 
 AC_ARG_ENABLE([debug],
-	[AS_HELP_STRING([--enable-debug], [Disables setting of NDEBUG, which affects debugging asserts in Eigen])]
+	[AS_HELP_STRING([--enable-debug], [Disables setting of NDEBUG, which affects debugging asserts])]
 )
 
 
@@ -71,14 +72,14 @@ AS_IF(
 AS_IF(
 	[test "x${enable_cppflags_setting}" = "xyes"],
 		[
-			CPPFLAGS=""
-			AS_IF(
-				[test "x$enable_debug" != "xyes"],
-					[
-					AX_APPEND_COMPILE_FLAGS([-DNDEBUG -DSEQAN_ENABLE_TESTING=0], [CPPFLAGS])
-					]
-			)
-			CPPFLAGS=$( echo $CPPFLAGS | $SED -e 's/^ *//' -e 's/ *$//' )
+		CPPFLAGS=""
+		AS_IF(
+			[test "x$enable_debug" != "xyes"],
+				[
+				AX_APPEND_COMPILE_FLAGS([-DNDEBUG -DSEQAN_ENABLE_TESTING=0], [CPPFLAGS])
+				]
+		)
+		CPPFLAGS=$( echo $CPPFLAGS | $SED -e 's/^ *//' -e 's/ *$//' )
 		]
 )
 
@@ -103,7 +104,7 @@ AX_CXX_COMPILE_STDCXX_11([], [mandatory])
 dnl ===================
 dnl Initialise Automake
 dnl ===================
-AM_INIT_AUTOMAKE([1.14 foreign dist-bzip2 no-dist-gzip subdir-objects silent-rules])
+AM_INIT_AUTOMAKE([1.15 foreign dist-bzip2 no-dist-gzip subdir-objects silent-rules])
 
 
 
@@ -155,6 +156,7 @@ dnl Report configuration to user
 dnl ============================
 AC_MSG_RESULT([
 	$PACKAGE_NAME $VERSION
+	Using $ax_cv_cxx_compiler_vendor, $ax_cv_cxx_compiler_version
 
 	CXX:        $CXX
 	CXXFLAGS:   $CXXFLAGS
