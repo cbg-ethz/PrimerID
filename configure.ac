@@ -75,7 +75,7 @@ AS_IF(
 			AS_IF(
 				[test "x$enable_debug" != "xyes"],
 					[
-					AX_APPEND_COMPILE_FLAGS([-DNDEBUG], [CPPFLAGS])
+					AX_APPEND_COMPILE_FLAGS([-DNDEBUG -DSEQAN_ENABLE_TESTING=0], [CPPFLAGS])
 					]
 			)
 			CPPFLAGS=$( echo $CPPFLAGS | $SED -e 's/^ *//' -e 's/ *$//' )

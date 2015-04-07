@@ -69,6 +69,7 @@ struct AppOptions
   int minScore;
   uint32_t numDeletion;
   uint32_t verbosity_level;
+	bool Phred;
   bool quiet;
 
   AppOptions()
@@ -77,6 +78,7 @@ struct AppOptions
         minScore(minValue<int>()),
         numDeletion(4),
         verbosity_level(1),
+				Phred(false),
         quiet(false)
   {
   }
@@ -125,6 +127,7 @@ parseCommandLine(AppOptions& options, int argc, char const** argv)
   addOption(parser, ArgParseOption("s", "minScore", "MinScore of alignment in order to be considered.", ArgParseArgument::INTEGER));
   addOption(parser, ArgParseOption("d", "deletionCutOff", "Maximum # consecutive deletions/gaps that are allowed.", ArgParseArgument::INTEGER));
   addOption(parser, ArgParseOption("v", "verbosityLevel", "Level of detail to print, with 0 being silent.", ArgParseArgument::INTEGER));
+	addOption(parser, ArgParseOption("Q", "phred", "Include Phred scores in final alignment."));
   addOption(parser, ArgParseOption("q", "quiet", "Do not print to stdout, equivalent to -v 0."));
 
   // Add Examples Section.
@@ -150,6 +153,7 @@ parseCommandLine(AppOptions& options, int argc, char const** argv)
   getOptionValue(options.minScore, parser, "s");
   getOptionValue(options.numDeletion, parser, "d");
   getOptionValue(options.verbosity_level, parser, "v");
+	getOptionValue(options.Phred, parser, "Q");
   getOptionValue(options.quiet, parser, "q");
 
   return ArgumentParser::PARSE_OK;
@@ -159,11 +163,13 @@ template <typename TAlign>
 void storeRecord(String<BamAlignmentRecord>& bamRecords,
                  uint16_t flag,
                  TAlign& align,
-                 StringSet<String<char>> const& patternIds,
+                 StringSet<CharString> const& readIDs,
+								 StringSet<CharString> const& readQUALs,
                  uint32_t refId,
                  int score,
                  uint32_t bamIndex,
-                 uint32_t numDeletion)
+                 uint32_t numDeletion,
+								bool phred)
 {
   int clipBegin = row(align, 1)._array[0];
   int clipEnd = length(row(align, 1)) - row(align, 1)._array[length(row(align, 1)._array) - 1];
@@ -172,8 +178,7 @@ void storeRecord(String<BamAlignmentRecord>& bamRecords,
   setClippedEndPosition(row(align, 0), clipEnd);
   setClippedEndPosition(row(align, 1), clipEnd);
 
-  getCigarString(bamRecords[bamIndex].cigar, row(align, 0), row(align, 1), 1000);
-
+  getCigarString(bamRecords[bamIndex].cigar, row(align, 0), row(align, 1), 1000); // CIGAR (6)
   String<CigarElement<>> const& cigarRef = bamRecords[bamIndex].cigar;
   bool deletion_too_long = false;
   for (const auto& i : cigarRef)
@@ -191,17 +196,21 @@ void storeRecord(String<BamAlignmentRecord>& bamRecords,
     flag = BamFlags::BAM_FLAG_UNMAPPED;
   }
 
-  bamRecords[bamIndex].flag = flag;
+  bamRecords[bamIndex].flag = flag; // FLAG (2)
   if (bamRecords[bamIndex].flag & BamFlags::BAM_FLAG_UNMAPPED)
     return;
 
-  bamRecords[bamIndex].rID = refId; // position of ref in header
-  bamRecords[bamIndex].qName = patternIds[bamIndex]; // qName
-  bamRecords[bamIndex].beginPos = row(align, 1)._array[0]; // POS
-  bamRecords[bamIndex].mapQ = 60; // MapQual
-  bamRecords[bamIndex].tLen = length(row(align, 1)); // TLen
-  bamRecords[bamIndex].seq = source(row(align, 1)); // SEQ
-  bamRecords[bamIndex].tags = "ASi"; // Tags
+	bamRecords[bamIndex].qName = readIDs[bamIndex]; // QNAME (1)
+	bamRecords[bamIndex].rID = refId; // RNAME (3)
+	bamRecords[bamIndex].beginPos = row(align, 1)._array[0]; // POS (4)
+	bamRecords[bamIndex].mapQ = 60; // MAPQ (5)
+  bamRecords[bamIndex].tLen = length(row(align, 1)); // TLEN (9)
+  bamRecords[bamIndex].seq = source(row(align, 1)); // SEQ (10)
+	if (phred)
+	{
+			bamRecords[bamIndex].qual = readQUALs[bamIndex]; // QUAL (11)
+	}
+  bamRecords[bamIndex].tags = "ASi"; // Tags (12+)
   appendRawPod(bamRecords[bamIndex].tags, score);
 }
 
@@ -314,8 +323,9 @@ template <typename TRefSeq,
           typename TAlignConfig>
 void align(String<BamAlignmentRecord>& bamRecords,
            StringSet<TRefSeq> const& refSeqs,
-           StringSet<TPatternId> const& patternIds,
-           StringSet<TPatternSeq> const& patternSeqs,
+           StringSet<TPatternId> const& readIDs,
+           StringSet<TPatternSeq> const& readSeqs,
+					 StringSet<TPatternId> const& readQUALs,
            TScoringScheme const& scoringScheme,
            TAlignConfig const& alignConfig,
            AppOptions const& options,
@@ -340,8 +350,8 @@ void align(String<BamAlignmentRecord>& bamRecords,
     assignSource(row(alignObjsRevComp[i], 0), refSeqs[i]);
   }
 
-  if (length(patternSeqs) < end)
-    end = length(patternSeqs);
+  if (length(readSeqs) < end)
+    end = length(readSeqs);
 
   progress += (end - start);
 
@@ -352,7 +362,7 @@ void align(String<BamAlignmentRecord>& bamRecords,
     maxId = -1;
     for (uint32_t j = 0; j < length(alignObjs); ++j)
     {
-      assignSource(row(alignObjs[j], 1), patternSeqs[i]);
+      assignSource(row(alignObjs[j], 1), readSeqs[i]);
       int result = globalAlignment(alignObjs[j], scoringScheme, alignConfig, maxScore);
       if (maxScore < result)
       {
@@ -362,7 +372,7 @@ void align(String<BamAlignmentRecord>& bamRecords,
     }
 
     // align backward
-    revComPatternSeq = patternSeqs[i];
+    revComPatternSeq = readSeqs[i];
     reverseComplement(revComPatternSeq);
     maxScoreRevComp = minValue<int>();
     maxIdRevComp = -1;
@@ -378,8 +388,24 @@ void align(String<BamAlignmentRecord>& bamRecords,
     }
 
     // check which score is higher and choose the associated alignment
+		int bestScore = std::max(maxScore, maxScoreRevComp);
+		int normScore = bestScore / (length(revComPatternSeq) * 5.0) * 255.0;
+		int bestId;
+		Align<TRefSeq>& bestAlign = (maxScore > maxScoreRevComp) ? (bamFlag = 0, bestId = maxId, alignObjs[maxId]) : (bamFlag = BAM_FLAG_RC, bestId = maxIdRevComp, alignObjsRevComp[maxIdRevComp]);
+		
+    if (normScore <= options.minScore) {
+      ++discard_score;
+      bamFlag = BamFlags::BAM_FLAG_UNMAPPED;
+    }
+		storeRecord(bamRecords, bamFlag, bestAlign, readIDs, readQUALs, bestId, normScore, i, options.numDeletion, options.Phred);
+		
+		
+		/*
     if (maxScore > maxScoreRevComp)
     {
+			
+			
+			
       int normScore = maxScore / (length(revComPatternSeq) * 5.0) * 255.0;
       if (normScore > options.minScore)
       {
@@ -391,7 +417,7 @@ void align(String<BamAlignmentRecord>& bamRecords,
         bamFlag = BamFlags::BAM_FLAG_UNMAPPED;
       }
 
-      storeRecord(bamRecords, bamFlag, alignObjs[maxId], patternIds, maxId, normScore, i, options.numDeletion);
+      storeRecord(bamRecords, bamFlag, alignObjs[maxId], readIDs, readQUALs, maxId, normScore, i, options.numDeletion, options.Phred);
     }
     else
     {
@@ -406,8 +432,13 @@ void align(String<BamAlignmentRecord>& bamRecords,
         bamFlag = BamFlags::BAM_FLAG_UNMAPPED;
       }
 
-      storeRecord(bamRecords, bamFlag, alignObjsRevComp[maxIdRevComp], patternIds, maxIdRevComp, normScore, i, options.numDeletion);
+      storeRecord(bamRecords, bamFlag, alignObjsRevComp[maxIdRevComp], readIDs, readQUALs, maxIdRevComp, normScore, i, options.numDeletion, options.Phred);
     }
+		
+		//storeRecord(bamRecords, bamFlag, alignObjs[maxId],               readIDs, readQUALs, maxId,        normScore, i, options.numDeletion, options.Phred);
+		//storeRecord(bamRecords, bamFlag, alignObjsRevComp[maxIdRevComp], readIDs, readQUALs, maxIdRevComp, normScore, i, options.numDeletion, options.Phred);
+		*/
+
   }
 }
 
@@ -440,6 +471,7 @@ int main(int argc, char const** argv)
     std::cout << "             -b: " << options.blockSize << '\n';
     std::cout << "             -s: " << options.minScore << '\n';
     std::cout << "             -d: " << options.numDeletion << '\n';
+		std::cout << "             -Q: " << (options.Phred ? "Phred Scores written" : "Phred Scores NOT written") << '\n';
   }
 
   // Reference
@@ -477,25 +509,37 @@ int main(int argc, char const** argv)
   if (options.verbosity_level)
     std::cout << "(1)\tReading input\n";
 
-  StringSet<CharString> patternIds;
-  StringSet<String<Dna5>> patternSeqs;
+  StringSet<CharString> readIDs;
+  StringSet<String<Dna5>> readSeqs;
+	StringSet<CharString> readQUALs;
+	
   for (const auto& i : options.patternFileNames)
   {
     // reading the fastq files
     SeqFileIn seqInPattern(toCString(i));
     while (!atEnd(seqInPattern))
     {
-      uint32_t newLength = length(patternIds) + 1;
-      resize(patternIds, newLength);
-      resize(patternSeqs, newLength);
-      readRecord(back(patternIds), back(patternSeqs), seqInPattern);
-      trimName(back(patternIds));
+      uint32_t newLength = length(readIDs) + 1;
+      resize(readIDs, newLength);
+      resize(readSeqs, newLength);
+			
+			if (options.Phred)
+			{
+				// with Phred scores
+				resize(readQUALs, newLength);
+				readRecord(back(readIDs), back(readSeqs), back(readQUALs), seqInPattern);
+			}
+			else
+			{
+				readRecord(back(readIDs), back(readSeqs), seqInPattern);
+			}
+      
+      trimName(back(readIDs));
     }
-    //readRecords(patternIds, patternSeqs, seqInPattern);
   }
 
   // prepare the resulting bam record
-  total = length(patternIds);
+  total = length(readIDs);
   String<BamAlignmentRecord> bamRecords;
   resize(bamRecords, total);
 
@@ -511,7 +555,7 @@ int main(int argc, char const** argv)
   {
     pool.postWork<void>([&, currentReadId, blockSize]
                         {
-				   align(bamRecords, refSeqs, patternIds, patternSeqs, scoringScheme, alignConfig, options, currentReadId, currentReadId + blockSize);
+				   align(bamRecords, refSeqs, readIDs, readSeqs, readQUALs, scoringScheme, alignConfig, options, currentReadId, currentReadId + blockSize);
                         });
   }
   progress_bar_thread.join();
