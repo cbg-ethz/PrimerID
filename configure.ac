@@ -63,7 +63,7 @@ AS_IF(
 	[test "x${enable_cxxflags_setting}" = "xyes"],
 		[
 		CXXFLAGS=""
-		AX_APPEND_COMPILE_FLAGS([-O3 -Wall -pedantic], [CXXFLAGS])
+		AX_APPEND_COMPILE_FLAGS([-O3 -Wall], [CXXFLAGS])
 		CXXFLAGS=$( echo $CXXFLAGS | $SED -e 's/^ *//' -e 's/ *$//' )
 		]
 )
