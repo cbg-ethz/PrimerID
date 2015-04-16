@@ -14,7 +14,7 @@ pidalyse_SOURCES = $(pidalyse_includes) \
 	src/pidalyse/proper_read.cpp \
 	src/pidalyse/reference.cpp
 pidalyse_CXXFLAGS = $(GSL_CFLAGS)
-pidalyse_LDADD = $(GSL_LIBS)
+pidalyse_LDADD = $(GSL_LIBS) $(BOOST_PROGRAM_OPTIONS_LIB)
 
 # pidalign
 libthreadpool11_sources = \

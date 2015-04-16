@@ -8,6 +8,7 @@ clean_files() {
 	rm -rf Makefile.in
 	rm -rf aclocal.m4
 	rm -rf autom4te.cache/
+	rm -rf compile
 	rm -rf config.guess
 	rm -rf config.h
 	rm -rf config.h.in
