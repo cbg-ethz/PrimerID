@@ -13,7 +13,7 @@ reference ref3236;
 
 int main(int argc, char* argv[])
 {
-	// program options
+	
 	std::string referenceFile_3223;
 	std::string referenceFile_3236;
 
@@ -22,7 +22,7 @@ int main(int argc, char* argv[])
 	std::vector<std::string> inputFiles;
 	bool help_flag = false;
 	
-  // generic options
+ 	// program options
   boost::program_options::options_description generic("Generic options");
   generic.add_options()("help,h", "Print this help");
 
@@ -41,15 +41,13 @@ int main(int argc, char* argv[])
 
   boost::program_options::options_description cmdline_options;
   cmdline_options.add(generic).add(config).add(hidden);
-
   boost::program_options::options_description visible("Allowed options");
   visible.add(generic).add(config);
-
   boost::program_options::positional_options_description p;
   p.add("input-file", -1);
-
   boost::program_options::variables_map global_options;
 
+	// parse command-line arguments
   try
   {
     boost::program_options::store(boost::program_options::command_line_parser(argc, argv).options(cmdline_options).positional(p).run(), global_options);
@@ -79,13 +77,6 @@ int main(int argc, char* argv[])
 
 	// load input files
   inputFiles = global_options["input-file"].as<std::vector<std::string>>();
-
-  for (const auto& i : inputFiles)
-  {
-    std::cout << i << '\n';
-  }
-
-  exit(0);
 
   // 1.) load reference
   std::cout << "1. Loading references\n";

@@ -47,6 +47,7 @@ std::atomic_uint_fast32_t discard_score(0);
 std::atomic_uint_fast32_t discard_del(0);
 uint32_t discard_bad_mate(0);
 uint32_t discard_singles(0);
+uint32_t discard_tlen(0);
 uint32_t accepted(0);
 
 // ==========================================================================
@@ -71,6 +72,7 @@ struct AppOptions
   uint32_t verbosity_level;
 	bool Phred;
   bool quiet;
+	uint32_t minimum_tlen;
 
   AppOptions()
       : numThreads(std::thread::hardware_concurrency()),
@@ -79,7 +81,8 @@ struct AppOptions
         numDeletion(4),
         verbosity_level(1),
 				Phred(false),
-        quiet(false)
+        quiet(false),
+				minimum_tlen(520)
   {
   }
 };
@@ -126,6 +129,7 @@ parseCommandLine(AppOptions& options, int argc, char const** argv)
   addOption(parser, ArgParseOption("b", "blockSize", "Block size of per thread processing.", ArgParseArgument::INTEGER));
   addOption(parser, ArgParseOption("s", "minScore", "MinScore of alignment in order to be considered.", ArgParseArgument::INTEGER));
   addOption(parser, ArgParseOption("d", "deletionCutOff", "Maximum # consecutive deletions/gaps that are allowed.", ArgParseArgument::INTEGER));
+	addOption(parser, ArgParseOption("T", "minTlen", "Minimum fragment size (TLEN) of paired-end reads.", ArgParseArgument::INTEGER));
   addOption(parser, ArgParseOption("v", "verbosityLevel", "Level of detail to print, with 0 being silent.", ArgParseArgument::INTEGER));
 	addOption(parser, ArgParseOption("Q", "phred", "Include Phred scores in final alignment."));
   addOption(parser, ArgParseOption("q", "quiet", "Do not print to stdout, equivalent to -v 0."));
@@ -152,6 +156,7 @@ parseCommandLine(AppOptions& options, int argc, char const** argv)
   getOptionValue(options.blockSize, parser, "b");
   getOptionValue(options.minScore, parser, "s");
   getOptionValue(options.numDeletion, parser, "d");
+	getOptionValue(options.minimum_tlen, parser, "T");
   getOptionValue(options.verbosity_level, parser, "v");
 	getOptionValue(options.Phred, parser, "Q");
   getOptionValue(options.quiet, parser, "q");
@@ -169,7 +174,7 @@ void storeRecord(String<BamAlignmentRecord>& bamRecords,
                  int score,
                  uint32_t bamIndex,
                  uint32_t numDeletion,
-								bool phred)
+								 bool phred)
 {
   int clipBegin = row(align, 1)._array[0];
   int clipEnd = length(row(align, 1)) - row(align, 1)._array[length(row(align, 1)._array) - 1];
@@ -245,31 +250,26 @@ void trimName(String<char>& readName)
   }
 }
 
-void adjustFlags(String<BamAlignmentRecord>& bamRecords)
+void adjustFlags(String<BamAlignmentRecord>& bamRecords, const AppOptions& options)
 {
-  uint16_t bad_reads;
   int32_t TLEN;
 
   for (uint32_t i = 0; i < length(bamRecords) - 1; ++i)
   {
     if (bamRecords[i].qName == bamRecords[i + 1].qName)
     {
-      bad_reads = (bamRecords[i].flag & BamFlags::BAM_FLAG_UNMAPPED) + (bamRecords[i + 1].flag & BamFlags::BAM_FLAG_UNMAPPED);
+			bool  left_read_bad = (bamRecords[i].flag & BamFlags::BAM_FLAG_UNMAPPED);
+			bool right_read_bad = (bamRecords[i + 1].flag & BamFlags::BAM_FLAG_UNMAPPED);
 
-      if (bad_reads)
+      if (left_read_bad || right_read_bad)
       {
         bamRecords[i].flag = BamFlags::BAM_FLAG_UNMAPPED;
         bamRecords[i + 1].flag = BamFlags::BAM_FLAG_UNMAPPED;
 
-        if (bad_reads == BamFlags::BAM_FLAG_UNMAPPED)
-        {
-          ++discard_bad_mate;
-        }
+				discard_bad_mate += (left_read_bad ^ right_read_bad);
       }
       else
       {
-        accepted += 2;
-
         // left read
         bamRecords[i].flag |= BamFlags::BAM_FLAG_MULTIPLE | BamFlags::BAM_FLAG_ALL_PROPER | BAM_FLAG_FIRST;
         if (bamRecords[i + 1].flag & BamFlags::BAM_FLAG_RC)
@@ -288,6 +288,18 @@ void adjustFlags(String<BamAlignmentRecord>& bamRecords)
         TLEN = bamRecords[i + 1].beginPos + bamRecords[i + 1].tLen - bamRecords[i].beginPos;
         bamRecords[i].tLen = TLEN;
         bamRecords[i + 1].tLen = -TLEN;
+				
+				if(TLEN < options.minimum_tlen)
+				{
+	        bamRecords[i].flag = BamFlags::BAM_FLAG_UNMAPPED;
+	        bamRecords[i + 1].flag = BamFlags::BAM_FLAG_UNMAPPED;
+					
+					discard_tlen += 2;
+				}
+				else
+				{
+					accepted += 2;
+				}
       }
       ++i;
     }
@@ -398,47 +410,6 @@ void align(String<BamAlignmentRecord>& bamRecords,
       bamFlag = BamFlags::BAM_FLAG_UNMAPPED;
     }
 		storeRecord(bamRecords, bamFlag, bestAlign, readIDs, readQUALs, bestId, normScore, i, options.numDeletion, options.Phred);
-		
-		
-		/*
-    if (maxScore > maxScoreRevComp)
-    {
-			
-			
-			
-      int normScore = maxScore / (length(revComPatternSeq) * 5.0) * 255.0;
-      if (normScore > options.minScore)
-      {
-        bamFlag = 0;
-      }
-      else
-      {
-        ++discard_score;
-        bamFlag = BamFlags::BAM_FLAG_UNMAPPED;
-      }
-
-      storeRecord(bamRecords, bamFlag, alignObjs[maxId], readIDs, readQUALs, maxId, normScore, i, options.numDeletion, options.Phred);
-    }
-    else
-    {
-      int normScore = maxScoreRevComp / (length(revComPatternSeq) * 5.0) * 255.0;
-      if (normScore > options.minScore)
-      {
-        bamFlag = BAM_FLAG_RC;
-      }
-      else
-      {
-        ++discard_score;
-        bamFlag = BamFlags::BAM_FLAG_UNMAPPED;
-      }
-
-      storeRecord(bamRecords, bamFlag, alignObjsRevComp[maxIdRevComp], readIDs, readQUALs, maxIdRevComp, normScore, i, options.numDeletion, options.Phred);
-    }
-		
-		//storeRecord(bamRecords, bamFlag, alignObjs[maxId],               readIDs, readQUALs, maxId,        normScore, i, options.numDeletion, options.Phred);
-		//storeRecord(bamRecords, bamFlag, alignObjsRevComp[maxIdRevComp], readIDs, readQUALs, maxIdRevComp, normScore, i, options.numDeletion, options.Phred);
-		*/
-
   }
 }
 
@@ -471,6 +442,7 @@ int main(int argc, char const** argv)
     std::cout << "             -b: " << options.blockSize << '\n';
     std::cout << "             -s: " << options.minScore << '\n';
     std::cout << "             -d: " << options.numDeletion << '\n';
+		std::cout << "             -T: " << options.minimum_tlen << '\n';
 		std::cout << "             -Q: " << (options.Phred ? "Phred Scores written" : "Phred Scores NOT written") << '\n';
   }
 
@@ -571,7 +543,7 @@ int main(int argc, char const** argv)
   if (options.verbosity_level)
     std::cout << "(3)\tPost-processing\n";
   sortRecords(bamRecords);
-  adjustFlags(bamRecords);
+  adjustFlags(bamRecords, options);
 
   // output
   if (options.verbosity_level)
@@ -597,6 +569,7 @@ int main(int argc, char const** argv)
     std::cout << "Discarded (deletions): " << discard_del << " (" << static_cast<double>(discard_del) / total * 100 << "%)\n";
     std::cout << " Discarded (bad mate): " << discard_bad_mate << " (" << static_cast<double>(discard_bad_mate) / total * 100 << "%)\n";
     std::cout << "  Discarded (singles): " << discard_singles << " (" << static_cast<double>(discard_singles) / total * 100 << "%)\n";
+		std::cout << "    Discarded (TLEN>): " << discard_tlen << " (" << static_cast<double>(discard_tlen) / total * 100 << "%)\n";
     std::cout << "       Accepted Reads: " << accepted << " (" << static_cast<double>(accepted) / total * 100 << "%)\n";
   }
 
