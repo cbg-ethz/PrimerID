@@ -13,109 +13,104 @@ reference ref3236;
 
 int main(int argc, char* argv[])
 {
-	
-	std::string referenceFile_3223;
-	std::string referenceFile_3236;
 
-	int minCoverage = 10;
-	double nonAmbigFrac = 0.8;
-	std::vector<std::string> inputFiles;
-	bool help_flag = false;
-	
- 	// program options
-  boost::program_options::options_description generic("Generic options");
-  generic.add_options()("help,h", "Print this help");
+    std::string referenceFile_3223;
+    std::string referenceFile_3236;
 
-  // configuration options
-  boost::program_options::options_description config("Configuration");
-  config.add_options()
-		("r3223", boost::program_options::value<std::string>(&referenceFile_3223)->required(), "File containing the 3223 references (REQUIRED)")
-		("r3236", boost::program_options::value<std::string>(&referenceFile_3236)->required(), "File containing the 3236 references (REQUIRED)")
-		("minCov", boost::program_options::value<int>(&minCoverage)->default_value(10), "Minimum number of reads per pID")
-		(",f", boost::program_options::value<double>(&nonAmbigFrac)->default_value(0.8, "0.8"), "Minimum fraction of non-ambiguous bases A,C,G,T to call majority base");
+    int minCoverage = 10;
+    double nonAmbigFrac = 0.8;
+    std::vector<std::string> inputFiles;
 
-  // hidden options, i.e., input files
-  boost::program_options::options_description hidden("Hidden options");
-  hidden.add_options()
-		("input-file", boost::program_options::value<std::vector<std::string>>()->required(), "input file");
+    // program options
+    boost::program_options::options_description generic("Generic options");
+    generic.add_options()("help,h", "Print this help");
 
-  boost::program_options::options_description cmdline_options;
-  cmdline_options.add(generic).add(config).add(hidden);
-  boost::program_options::options_description visible("Allowed options");
-  visible.add(generic).add(config);
-  boost::program_options::positional_options_description p;
-  p.add("input-file", -1);
-  boost::program_options::variables_map global_options;
+    // configuration options
+    boost::program_options::options_description config("Configuration");
+    config.add_options()("r3223", boost::program_options::value<std::string>(&referenceFile_3223)->required(), "File containing the 3223 references (REQUIRED)")("r3236", boost::program_options::value<std::string>(&referenceFile_3236)->required(), "File containing the 3236 references (REQUIRED)")("minCov", boost::program_options::value<int>(&minCoverage)->default_value(10), "Minimum number of reads per pID")(",f", boost::program_options::value<double>(&nonAmbigFrac)->default_value(0.8, "0.8"), "Minimum fraction of non-ambiguous bases A,C,G,T to call majority base");
 
-	// parse command-line arguments
-  try
-  {
-    boost::program_options::store(boost::program_options::command_line_parser(argc, argv).options(cmdline_options).positional(p).run(), global_options);
-		
-		// show help options
-	  if (global_options.count("help"))
-	  {
-	    std::cout << visible << "\n";
-	    return EXIT_SUCCESS;
-	  }
-		
-    boost::program_options::notify(global_options);
-  }
-  catch (boost::program_options::required_option& e)
-  {
-    if (e.get_option_name() == "--input-file")
-			std::cerr << "ERROR: no input files provided\n";
-		else
-			std::cerr << "ERROR: " << e.what() << "\n";
-    return EXIT_FAILURE;
-  }
-  catch (boost::program_options::error& e)
-  {
-    std::cerr << "ERROR: " << e.what() << "\n";
-    return EXIT_FAILURE;
-  }
+    // hidden options, i.e., input files
+    boost::program_options::options_description hidden("Hidden options");
+    hidden.add_options()("input-file", boost::program_options::value<std::vector<std::string>>()->required(), "input file");
 
-	// load input files
-  inputFiles = global_options["input-file"].as<std::vector<std::string>>();
+    boost::program_options::options_description cmdline_options;
+    cmdline_options.add(generic).add(config).add(hidden);
+    boost::program_options::options_description visible("Allowed options");
+    visible.add(generic).add(config);
+    boost::program_options::positional_options_description p;
+    p.add("input-file", -1);
+    boost::program_options::variables_map global_options;
 
-  // 1.) load reference
-  std::cout << "1. Loading references\n";
-  ref3223 = reference(referenceFile_3223, START_3223);
-  ref3236 = reference(referenceFile_3236, START_3236);
+    // parse command-line arguments
+    try {
+        boost::program_options::store(boost::program_options::command_line_parser(argc, argv).options(cmdline_options).positional(p).run(), global_options);
 
-  // ref3223.display_strains_hetero();
-  // ref3236.display_strains_hetero();
+        // show help options
+        if (global_options.count("help")) {
+            std::cout << visible << "\n";
+            return EXIT_SUCCESS;
+        }
 
-  // 2.) load alignments
-  std::cout << "2. Loading alignments\n";
-  alignments DATA(inputFiles);
+        boost::program_options::notify(global_options);
+    }
+    catch (boost::program_options::required_option& e) {
+        if (e.get_option_name() == "--input-file")
+            std::cerr << "ERROR: no input files provided\n";
+        else
+            std::cerr << "ERROR: " << e.what() << "\n";
+        return EXIT_FAILURE;
+    }
+    catch (boost::program_options::error& e) {
+        std::cerr << "ERROR: " << e.what() << "\n";
+        return EXIT_FAILURE;
+    }
 
-  //DATA.write_raw_to_fasta();
+    // 1.) parse input files
+    inputFiles = global_options["input-file"].as<std::vector<std::string>>();
 
-  // 3.) process data
-  std::cout << "3. Processing data\n";
-  DATA.filtering_QA();
+    // 2.) show parameters
+    std::cout << "Parameters:\n";
+    std::cout << "            Min coverage for calling consensus: " << minCoverage << '\n';
+    std::cout << "  Minimum plurality required for majority base: " << nonAmbigFrac << '\n';
+    std::cout << "                         Number of input files: " << inputFiles.size() << '\n';
 
-  DATA.remove_primerID_collisions(minCoverage, nonAmbigFrac, true);
-  //DATA.show_clone_frequencies();
+    // 3.) load reference
+    std::cout << "1. Loading references\n";
+    ::ref3223 = reference(referenceFile_3223, referenceType::START_3223);
+    ::ref3236 = reference(referenceFile_3236, referenceType::START_3236);
+    set_reference_intersection(::ref3223, ::ref3236);
 
-  // 4.) calculate statistics
-  std::cout << "4. Performing statistics\n";
+    ref3223.display_strains_hetero();
+    ref3236.display_strains_hetero();
 
-  DATA.estimate_RT_substitution_rate(true);
-  DATA.estimate_RT_recombination_rate(true);
-  DATA.estimate_PCR_substitution_rate(true);
+    //ref3223.display_strains_verbose();
+    //ref3236.display_strains_verbose();
 
-  DATA.write_prob_to_csv();
+    // 4.) load alignments
+    std::cout << "2. Loading alignments\n";
+    alignments DATA(inputFiles);
 
-  DATA.display_raw_and_primerID_counts();
+    // 5.) perform QA and filtering
+    std::cout << "3. Filtering and performing QA\n";
+    DATA.filtering_QA();
 
-  /*
-	// DATA.calculate_RT_bias_pvalue();
-  // DATA.estimate_effective_RNA_number(true);
-  // DATA.show_recombination_patterns();
-  // DATA.plot_RT_recombination_LogLik(1E-6, 2000);
-	*/
+    // 6.) Remove collisions
+    std::cout << "4. Removing collisions\n";
+    DATA.remove_pID_collisions(minCoverage, nonAmbigFrac, true);
 
-  return EXIT_SUCCESS;
+    // 7.) Calculate estimators
+    std::cout << "5. Calculating estimators\n";
+    DATA.estimate_RT_substitution_rate(true);
+    DATA.estimate_RT_recombination_rate(true);
+    DATA.estimate_PCR_substitution_rate(true);
+
+    DATA.plot_RT_recombination_LogLik();
+
+    // 8.) Perform remaining statistics
+    std::cout << "6. Writing statistics to file\n";
+    DATA.show_clone_frequencies();
+    DATA.write_frequencies_to_MATLAB();
+    DATA.write_all_statistics();
+
+    return EXIT_SUCCESS;
 }

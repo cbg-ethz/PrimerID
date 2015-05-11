@@ -20,26 +20,32 @@ clean_files() {
 	rm -rf depcomp
 	rm -rf install-sh
 	rm -rf missing
-	rm -rf pidalign
-	rm -rf pidalyse
 	rm -rf stamp-h1
 
 	# ./src/pidalign
+	rm -rf pidalign
 	rm -rf src/pidalign/.deps/
 	rm -rf src/pidalign/.dirstamp
-	rm -rf src/pidalign/pidalign-pidalign.o
-	rm -rf src/pidalign/threadpool11/.deps/
-	rm -rf src/pidalign/threadpool11/.dirstamp
-	rm -rf src/pidalign/threadpool11/pidalign-pool.o
-	rm -rf src/pidalign/threadpool11/pidalign-worker.o
+	rm -rf src/pidalign/*.o
 
 	# ./src/pidalyse
+	rm -rf pidalyse
 	rm -rf src/pidalyse/.deps/
 	rm -rf src/pidalyse/.dirstamp
-	rm -rf src/pidalyse/pidalyse-alignment.o
-	rm -rf src/pidalyse/pidalyse-main.o
-	rm -rf src/pidalyse/pidalyse-proper_read.o
-	rm -rf src/pidalyse/pidalyse-reference.o
+	rm -rf src/pidalyse/*.o
+	
+	# ./src/pidrtpcrsim
+	rm -rf pidrtpcrsim
+	rm -rf src/pidrtpcrsim/.deps/
+	rm -rf src/pidrtpcrsim/.dirstamp
+	rm -rf src/pidrtpcrsim/*.o
+	
+	# ./test
+	rm -rf test-dnavector
+	rm -rf test-prob-cycle
+	rm -rf test/.deps/
+	rm -rf test/.dirstamp
+	rm -rf test/*.o
 
 	# Tarballs
 	rm -rf pidalyse-0.1.tar.bz2
@@ -48,10 +54,9 @@ clean_files() {
 	# OS X files
 	rm -rf .DS_Store
 	rm -rf src/.DS_Store
-	rm -rf m4/.DS_Store
 	rm -rf src/pidalign/.DS_Store
-	rm -rf src/pidalign/threadpool11/.DS_Store
 	rm -rf src/pidalyse/.DS_Store
+	rm -rf src/pidrtpcrsim/.DS_Store
 }
 
 if [[ "$1" == "--clean" ]]

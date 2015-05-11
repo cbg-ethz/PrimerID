@@ -2,1199 +2,902 @@
 #include <iomanip>
 #include <fstream>
 #include <cstddef>
+#include <memory>
 
 #include "alignment.hpp"
+#include "statistics.hpp"
+
+static prob_cycle PCR_prob;
 
 #include <boost/algorithm/string.hpp>
 #include <boost/math/tools/minima.hpp>
 #include <boost/math/tools/roots.hpp>
+#include <boost/filesystem.hpp>
+
 #include <gsl/gsl_randist.h>
+#include <gsl/gsl_cdf.h>
+#include <gsl/gsl_statistics_double.h>
 
-// custom functors
-#include "prob_cycle.hpp"
-#include "kmeans.hpp"
-
-// alignment
-struct SAMentry
+/* ALIGNMENT */
+// CTOR:
+alignment::alignment(const std::string& fileName_)
+    : m_input_fileName(fileName_), m_pid_stats(10)
 {
-  std::string QNAME;
-  int         FLAG;
-  std::string RNAME;
-  int         POS;
-  int         MAPQ;
-  std::string CIGAR;
-  std::string RNEXT;
-  int         PNEXT;
-  int         TLEN;
-  std::string SEQ;
-  std::string QUAL;
+    m_fileName = boost::filesystem::path(m_input_fileName).filename().string();
+    m_fileStem = boost::filesystem::path(m_input_fileName).stem().string();
 
-  SAMentry() = default;
+    m_reference = (m_fileName.find("3223") != std::string::npos ? ::ref3223 : ::ref3236);
 
-  SAMentry(
-      const std::string& _QNAME,
-      const std::string& _FLAG,
-      const std::string& _RNAME,
-      const std::string& _POS,
-      const std::string& _MAPQ,
-      const std::string& _CIGAR,
-      const std::string& _RNEXT,
-      const std::string& _PNEXT,
-      const std::string& _TLEN,
-      const std::string& _SEQ,
-      const std::string& _QUAL)
-      : QNAME(_QNAME), FLAG(stoi(_FLAG)), RNAME(_RNAME), POS(stoi(_POS)), MAPQ(stoi(_MAPQ)), CIGAR(_CIGAR), RNEXT(_RNEXT), PNEXT(stoi(_PNEXT)), TLEN(stoi(_TLEN)), SEQ(_SEQ), QUAL(_SEQ) {}
-};
+    std::ifstream input;
+    input.open(m_input_fileName.c_str());
 
-typedef std::pair<std::string, std::pair<SAMentry, SAMentry>> raw_sequence_pair;
-typedef std::map<std::string, std::pair<SAMentry, SAMentry>> raw_sequence_pairs;
+    if (input.is_open()) {
+        m_raw_reads.reserve(700000);
 
-void construct_sequence(const SAMentry& READ, std::string& DNA, const reference& ref, std::string& PrimerID, int& no_inserts, int& no_dels, int& len_overhang)
-{
-  const std::string& read_sequence = READ.SEQ;
-  const std::string& CIGAR = READ.CIGAR;
+        // temporary objects for I/O
+        std::string line_left, line_right;
+        std::vector<std::string> split_vec_left, split_vec_right;
+        int line_no = 2;
 
-	// current position in CIGAR
-  int curPos = 0;
-	
-	// current position in READ
-  int curOffset = 0;
-	
-	// current position on GENOME
-  int offsetRef = READ.POS;
-	
-	// current length of stretch in READ
-  int curLen;
-	
-  no_inserts = 0;
-  DNA.clear();
+        // temporary objects for constructing raw read
+        std::string final_raw_DNA;
+        std::string pID;
+        int num_inserts, num_dels, num_N;
+        int len_overhang, len_pID;
+        bool is_valid;
 
-  // 1.) tokenize CIGAR
-  for (size_t i = 0; i < CIGAR.length(); ++i)
-  {
-    if (isalpha(CIGAR[i]))
-    {
-      curLen = stoi(CIGAR.substr(curPos, i - curPos));
-      curPos = i + 1;
+        while (input.good()) {
+            if (line_no % 200000 == 0)
+                std::cout << "Loaded " << line_no / 1000 << "k lines\n";
 
-      switch (CIGAR[i])
-      {
-      case 'M':
-        DNA.append(read_sequence, curOffset, curLen);
-        curOffset += curLen;
-        offsetRef += curLen;
-        break;
+            // read left read mate
+            getline(input, line_left);
+            line_left.erase(std::remove(line_left.begin(), line_left.end(), '\n'), line_left.end());
 
-      case 'D':
-        DNA.append(curLen, 'N');
-        offsetRef += curLen;
-        break;
+            // skip SAM header
+            if ((line_left.length() == 0) || (line_left[0] == '@'))
+                continue;
+            ++line_no;
 
-      case 'I':
-        if (offsetRef == ref.PID_start)
-        {
-          no_inserts += curLen;
+            // read right read mate
+            getline(input, line_right);
+            line_right.erase(std::remove(line_right.begin(), line_right.end(), '\n'), line_right.end());
+            ++line_no;
+
+            // tokenize SAM lines
+            boost::split(split_vec_left, line_left, boost::is_any_of("\t"), boost::token_compress_on);
+            boost::split(split_vec_right, line_right, boost::is_any_of("\t"), boost::token_compress_on);
+
+            // build merged read
+            final_raw_DNA.reserve(m_reference.m_genome_length);
+            final_raw_DNA.clear();
+            pID.reserve(m_reference.m_pID_length);
+
+            construct_sequence(split_vec_left[9], split_vec_left[5], stoi(split_vec_left[3]), m_reference, final_raw_DNA, pID, num_inserts, num_dels, num_N, len_overhang); // left
+            construct_sequence(split_vec_right[9], split_vec_right[5], stoi(split_vec_right[3]), m_reference, final_raw_DNA, pID, num_inserts, num_dels, num_N, len_overhang); // right
+
+            len_pID = std::max(static_cast<int>(pID.length()) + num_inserts - num_dels, 0);
+            is_valid = (num_dels == 0) && (num_inserts == 0) && (num_N == 0) && (len_overhang >= m_reference.m_overhang_min_length) && (len_pID == m_reference.m_pID_length);
+
+            m_raw_reads.emplace_back(std::move(final_raw_DNA), std::move(pID), num_inserts, num_dels, len_overhang, len_pID, is_valid);
         }
-
-        curOffset += curLen;
-        break;
-
-      case 'S':
-        curOffset += curLen;
-        break;
-      }
     }
-  }
-
-	// 2.) calculate statistics for reads
-	if (READ.POS > 260)
-	{
-		// right read
-		if (offsetRef > ref.PID_start)
-		{
-			// has a pID
-			PrimerID = DNA.substr(ref.PID_start - READ.POS, ref.PID_length);
-			no_dels = std::count(PrimerID.begin(), PrimerID.end(), 'N');
-		}
-		else
-		{
-			// has no pID
-			PrimerID.clear();
-			no_dels = 0;
-		}
-		
-		//std::cout << std::string(READ.POS-1, ' ') << DNA << '\n';
-		
-		len_overhang = std::max(offsetRef - ref.overhang_start, 0);
-		
-    if (offsetRef > ref.replace_start)
-      DNA.erase(ref.replace_start - READ.POS);
-
-    DNA.append(ref.PID_start - READ.POS - DNA.length(), 'N');
-	}
-	else
-	{
-		// left read
-		no_inserts = 0;
-		no_dels = 0;
-		len_overhang = 0;
-		PrimerID.clear();
-	}
-}
-
-void merge_reads(const std::string& left_Read, const std::string& right_Read, int left_start, int right_start, const reference& ref, std::string& new_final_read)
-{
-  //int global_start, global_end;
-  //global_start = left_start;
-  //global_end = right_start + right_Read.length();
-
-  new_final_read.clear();
-	
-	// pad before left read
-  new_final_read.append(std::max(left_start - 1, 0), 'N');
-	
-	// append left read
-  new_final_read.append(left_Read);
-	
-	// append spacer between read mates
-  new_final_read.append(std::max(static_cast<int>(right_start - 1 - new_final_read.length()), 0), 'N');
-	
-	// append right read
-  new_final_read.append(right_Read);
-	
-	// pad after the end of the read
-  new_final_read.append(std::max(static_cast<int>(ref.genome_length - new_final_read.length()), 0), 'N');
-}
-
-alignment::alignment(const std::string& fileName)
-: _pid_stats(10),
-	input_fileName(fileName)
-{
-  size_t slash_pos = input_fileName.find_last_of('/');
-  slash_pos = (slash_pos == std::string::npos ? 0 : slash_pos + 1);
-  just_fileName = input_fileName.substr(slash_pos);
-	fileStem = just_fileName.substr(0, just_fileName.find(".sam"));
-
-  if (input_fileName.find("3223") != std::string::npos)
-    this->_reference = ref3223;
-  else
-    this->_reference = ref3236;
-
-  // 1.) read raw SAM input
-  raw_sequence_pairs sam_data;
-
-  std::ifstream input;
-  input.open(fileName.c_str());
-  raw_sequence_pairs::iterator it;
-
-  if (input.is_open())
-  {
-    std::string temp, QNAME;
-    std::vector<std::string> SplitVec;
-    int line_no = 1;
-
-    while (input.good())
-    {
-      if (line_no % 100000 == 0)
-        std::cout << "Loaded " << line_no << " lines\n";
-
-      getline(input, temp);
-      temp.erase(std::remove(temp.begin(), temp.end(), '\n'), temp.end());
-
-      if ((temp.length() == 0) || (temp[0] == '@'))
-        continue;
-			++line_no;
-
-      boost::split(SplitVec, temp, boost::is_any_of("\t"), boost::token_compress_on);
-
-      QNAME = SplitVec[0].substr(0, SplitVec[0].find(' '));
-      it = sam_data.find(QNAME);
-      if (it == sam_data.end())
-      {
-        // not found
-        sam_data.insert(raw_sequence_pair(QNAME, std::pair<SAMentry, SAMentry>(
-                                                     SAMentry(
-                                                         QNAME,
-                                                         SplitVec[1],
-                                                         SplitVec[2],
-                                                         SplitVec[3],
-                                                         SplitVec[4],
-                                                         SplitVec[5],
-                                                         SplitVec[6],
-                                                         SplitVec[7],
-                                                         SplitVec[8],
-                                                         SplitVec[9],
-                                                         SplitVec[10]),
-                                                     SAMentry())));
-      }
-      else
-      {
-        // found
-        it->second.second = SAMentry(
-            QNAME,
-            SplitVec[1],
-            SplitVec[2],
-            SplitVec[3],
-            SplitVec[4],
-            SplitVec[5],
-            SplitVec[6],
-            SplitVec[7],
-            SplitVec[8],
-            SplitVec[9],
-            SplitVec[10]);
-
-        // swap elements such that first element is left sequence and second element is right sequence
-        if (it->second.first.POS > it->second.second.POS)
-        {
-          std::swap(it->second.first, it->second.second);
-        }
-      }
+    else {
+        std::cout << m_input_fileName << " is not readable!\n";
+        exit(EXIT_FAILURE);
     }
-  }
-  else
-  {
-    std::cout << fileName << " is not readable!\n";
-    exit(EXIT_FAILURE);
-  }
-  input.close();
+    input.close();
 
-  // 2.) convert raw SAM data to merged reads
-	_raw_reads.reserve(sam_data.size());
-	
-	std::string primerID;
-  std::string leftRead, rightRead;
-  std::string temp_final_read;
-	
-	int no_inserts, no_dels, len_overhang;
-	int len_pID;
-		
-  for (const auto& i : sam_data)
-  {	
-    // 1.) check whether reads have a matching mate
-    if ((i.second.second.SEQ.length() == 0) || (i.second.first.SEQ.length() == 0))
-      continue;
-		
-		// DEBUG
-		//std::cout << std::string(i.second.second.POS - 1, ' ') << i.second.second.SEQ << '\n'; 
+    std::sort(m_raw_reads.begin(), m_raw_reads.end(),
+        [](const raw_paired_read& A, const raw_paired_read& B) {
+			return (A.m_pID < B.m_pID);
+        });
 
-    // 2.) parse left and right read
-		construct_sequence(i.second.first,  leftRead,  _reference, primerID, no_inserts, no_dels, len_overhang); // left
-		construct_sequence(i.second.second, rightRead, _reference, primerID, no_inserts, no_dels, len_overhang); // right
-
-    // 3.) merge left and right read
-    merge_reads(leftRead, rightRead, i.second.first.POS, i.second.second.POS, _reference, temp_final_read);
-
-		// 4.) add to primerID length histogram
-		len_pID = std::max(static_cast<int>(primerID.length()) + no_inserts - no_dels, 0);
-		
-		
-		// DEBUG
-		//std::cout << temp_final_read << '\n';
-		//std::cout << std::string(_reference.PID_start-1, ' ') << primerID << '\t' << len_pID << '\t' << len_overhang << '\n' << '\n';
-		
-		_raw_reads.emplace_back(std::move(temp_final_read), std::move(primerID), no_inserts, no_dels, len_overhang, len_pID);
-  }
-
-  std::cout << input_fileName << ": " << sam_data.size() << " unique read identifiers\n"
-						<< std::string(input_fileName.length(), ' ') << "  " << _raw_reads.size() << " properly paired (" << std::fixed << std::setprecision(1) << static_cast<double>(_raw_reads.size()) / sam_data.size()*100 << "%)\n";
+    std::cout << m_input_fileName << ": " << m_raw_reads.size() << " unique read identifiers\n";
 }
 
+// PREPROCESSING:
 void alignment::filtering_QA()
 {
-	bool valid;
-  int accepted = 0;
-	std::pair<std::map<std::string, std::vector<proper_read>>::iterator, bool> insert_it;
+    std::string curString;
+    int accepted = 0;
+    m_raw_pID_collection.clear();
+    m_raw_pID_collection.reserve(600000);
 
-	//_pid_stats.show_statistics();
+    // 1. add to vector
+    for (const auto& i : m_raw_reads) {
+        m_reference.assign_counts(i.m_DNA, false);
+        m_pid_stats.addLengthToHistogram(i.m_len_pID);
 
-	// 1.) perform initial QA
-  for (const auto& i : _raw_reads)
-  {
-    _reference.assign_counts(i.DNA);
-		_pid_stats.addLengthToHistogram(i.len_pID);
-		
-		valid = ((i.len_pID == 10) && (i.no_inserts == 0) && (i.no_dels == 0) && (i.len_overhang >= _reference.overhang_min_length));
-    if (!(valid))
-      continue;
+        if (i.m_is_valid) {
+            // can add read
+            if (i.m_pID != curString) {
+                // new pID
+                curString = i.m_pID;
+                m_raw_pID_collection.push_back(std::pair<std::string, std::vector<proper_read>>(curString, std::vector<proper_read>()));
+            }
 
-    // add to map
-    insert_it = raw_primerID_map.emplace(i.PrimerID, std::vector<proper_read>());
-    insert_it.first->second.emplace_back(i.DNA, _reference);
-  }
-	
-	// 2.) calculate stats for MOTIF
-	for (const auto& i : raw_primerID_map)
-	{
-		_pid_stats.addPrimer(i.first, i.second.size());
-		accepted += i.second.size();
-	}
-	
-	//_pid_stats.show_statistics();
-
-  std::cout << input_fileName << ": " << accepted << " passed QA (" << std::fixed << std::setprecision(1) << static_cast<double>(accepted) / _raw_reads.size()*100 << "%)\n";
-}
-
-std::string alignment::call_consensus_and_remove_collisions(std::vector<proper_read>& reads, int minDisplay, const std::string& PrimerID, std::vector<proper_read*>& filtered_reads)
-{
-  static kmeans clustering;
-
-  if (reads.size() < _min_current_coverage)
-  {
-    // indecisive - coverage too low
-    return std::string("1");
-  }
-
-  clustering(reads, _min_majority_fraction);
-  if (clustering._frac1 < _min_majority_fraction)
-  {
-    // collision
-    return std::string("0");
-  }
-  else
-  {
-    // no collision
-		if (clustering._cluster1.size() < _min_current_coverage)
-		{
-	    // indecisive - coverage too low
-	    return std::string("1");
-		}
-		else
-		{
-			// 1st and largest cluster has acceptable size
-			filtered_reads = clustering._cluster1;
-		}
-		
-    return clustering._full_consensus1;
-  }
-}
-
-void alignment::remove_primerID_collisions(int minC, double minMajorFraction, bool report, int minDisplay)
-{
-  _min_current_coverage = minC;
-  _min_majority_fraction = minMajorFraction;
-
-  std::string consensus;
-  number_collisions = 0;
-  number_indecisive = 0;
-  number_singletons = 0;
-
-  collision_free_primerID_map.clear();
-  consensus_primerID_map.clear();
-
-  std::pair<std::map<std::string, consensus_read>::iterator, bool> it;
-	std::pair<std::map<std::string, int>::iterator, bool> insert_it;
-	std::vector<proper_read*> tmp;
-
-  for (auto& i : raw_primerID_map)
-  {
-    consensus = call_consensus_and_remove_collisions(i.second, minDisplay, i.first, tmp);
-
-    switch (consensus[0])
-    {
-    case '0':
-      // collision
-      ++number_collisions;
-			
-			// make RNA primerID count pileup
-			//primerID_RT_histogram[i.first] += 1;
-      break;
-
-    case '1':
-      // indecisive
-      ++number_indecisive;
-      break;
-
-    default:
-      // OK, proper consensus
-      ++number_singletons;
-			
-			// make RNA primerID count pileup
-	    //++primerID_RT_histogram[i.first];
-
-      _reference.assign_counts(consensus, true);
-			_pid_stats.addPrimer_collisionFree(i.first, tmp.size());
-			//std::cout << i.first << '\t' << consensus << '\n';
-
-      collision_free_primerID_map.emplace(i.first, tmp);
-      it = consensus_primerID_map.emplace(std::piecewise_construct,
-                                          std::forward_as_tuple(i.first),
-                                          std::forward_as_tuple(std::move(consensus), _reference, tmp.size()));
-      break;
+            m_raw_pID_collection.back().second.emplace_back(i.m_DNA, m_reference);
+        }
     }
-  }
 
-  _reference.normalise_counts();
+    // 2. collect statistics
+    for (const auto& i : m_raw_pID_collection) {
+        m_pid_stats.addPrimer(i.first, i.second.size());
+        accepted += i.second.size();
+    }
 
-  if (report)
-  {
-		std::cout << "Collision-free PrimerIDs: " << number_singletons << '\n';
-    std::cout << "    Indecisive PrimerIDs: " << number_indecisive << '\n';
-    std::cout << "     Collision PrimerIDs: " << number_collisions << " (" << std::fixed << std::setprecision(1) << static_cast<double>(number_collisions) / (number_singletons + number_collisions) * 100 << "%)\n";
-    std::cout << "         Total PrimerIDs: " << raw_primerID_map.size() << '\n';
-  }
+    std::cout << m_fileName << ": " << accepted << " passed QA (" << std::fixed << std::setprecision(1) << static_cast<double>(accepted) / m_raw_reads.size() * 100 << "%)\n";
 }
 
-void alignment::show_primerIDs_with_min_coverage(size_t minC) const
+void alignment::remove_pID_collisions(int min_required_coverage, double min_plurality, bool report)
 {
-  for (const auto& i : raw_primerID_map)
-  {
-    if (i.second.size() >= minC)
-    {
-      std::cout << i.first << '\n' << std::string(10, '-') << '\n';
-      for (const auto& j : i.second)
-			{
-				for (auto k : j._ref.heterozygous_loci)
-				{
-					std::cout << j._fullRead[k];
-				}
-			}
-      std::cout << "\n\n";
+    m_min_current_coverage = min_required_coverage;
+    m_min_majority_fraction = min_plurality;
+
+    std::string consensus;
+    m_number_collisions = 0;
+    m_number_indecisive = 0;
+    m_number_singletons = 0;
+
+    m_collision_free_pID_collection.clear();
+    m_consensus_pID_collection.clear();
+
+    std::vector<proper_read*> tmp;
+
+    for (auto& i : m_raw_pID_collection) {
+        tmp.clear();
+        consensus = call_consensus_and_remove_collisions(i.second, 50, tmp);
+
+        switch (consensus[0]) {
+        case '0':
+            // collision
+            ++m_number_collisions;
+            break;
+
+        case '1':
+            // indecisive
+            ++m_number_indecisive;
+            break;
+
+        default:
+            // OK, proper consensus
+            ++m_number_singletons;
+
+            m_reference.assign_counts(consensus, true);
+            m_pid_stats.addPrimer_collisionFree(i.first, tmp.size());
+
+            m_collision_free_pID_collection.emplace_back(i.first, std::move(tmp));
+            m_consensus_pID_collection.emplace_back(std::piecewise_construct,
+                std::forward_as_tuple(i.first),
+                std::forward_as_tuple(std::move(consensus), m_reference, tmp.size()));
+            break;
+        }
     }
-  }
+
+    m_reference.normalise_counts();
+
+    if (report) {
+        std::cout << "Collision-free pIDs: " << m_number_singletons << '\n';
+        std::cout << "    Indecisive pIDs: " << m_number_indecisive << '\n';
+        std::cout << "     Collision pIDs: " << m_number_collisions << " (" << std::fixed << std::setprecision(1) << static_cast<double>(m_number_collisions) / (m_number_singletons + m_number_collisions) * 100 << "%)\n";
+        std::cout << "         Total pIDs: " << m_raw_pID_collection.size() << '\n';
+    }
+}
+
+// RT STUFF:
+hamming_return_type alignment::count_mismatches_at_locus(int locus) const
+{
+    int mismatches = 0;
+    int valid_trials = 0;
+    int Ns = 0;
+
+    for (const auto& i : m_consensus_pID_collection) {
+        if (valid_base(i.second.m_fullConsensus[locus])) {
+            ++valid_trials;
+            mismatches += (i.second.m_fullConsensus[locus] != i.second.m_ref.m_all_reference_strains[0].m_DNA[locus]);
+        }
+        else {
+            ++Ns;
+        }
+    }
+
+    return hamming_return_type(mismatches, valid_trials, Ns);
 }
 
 hamming_return_type alignment::calculate_RT_mismatches() const
 {
-  int mismatches = 0;
-  int valid_trials = 0;
-  int Ns = 0;
-  hamming_return_type temp;
+    int mismatches = 0;
+    int valid_trials = 0;
+    int Ns = 0;
+    hamming_return_type temp;
 
-  for (const auto& i : consensus_primerID_map)
-  {
-    temp = i.second.calculate_homozygous_mismatches();
+    for (const auto& i : m_consensus_pID_collection) {
+        temp = i.second.calculate_homozygous_mismatches();
 
-    mismatches += std::get<0>(temp);
-    valid_trials += std::get<1>(temp);
-    Ns += std::get<2>(temp);
-  }
+        mismatches += std::get<0>(temp);
+        valid_trials += std::get<1>(temp);
+        Ns += std::get<2>(temp);
+    }
 
-  return hamming_return_type(mismatches, valid_trials, Ns);
+    return hamming_return_type(mismatches, valid_trials, Ns);
 }
 
 double alignment::LogLik(double s, double r) const
 {
-  double total_likelihood = 0;
-  double temp;
+    double total_likelihood = 0;
+    double temp;
 
-  if (_reference.freq_initialised == false)
-  {
-    std::cout << "Cannot calculate Log Likelihood without estimated reference frequencies!\n";
-    exit(EXIT_FAILURE);
-  }
-
-  std::map<std::string, double> string_to_prob_cache;
-  std::map<std::string, double>::const_iterator it;
-
-  for (const auto& i : consensus_primerID_map)
-  {
-    it = string_to_prob_cache.find(i.second.heterozygous_loci_string);
-    if (it == string_to_prob_cache.end())
-    {
-      // new sequence
-      temp = i.second.log_prob(s, r);
-      string_to_prob_cache.emplace(i.second.heterozygous_loci_string, temp);
-      total_likelihood += temp;
-
-      // std::cout << i.second.heterozygous_loci_string << '\t' << temp << '\n';
+    if (m_reference.m_freq_initialised == false) {
+        std::cout << "Cannot calculate Log Likelihood without estimated reference frequencies!\n";
+        exit(EXIT_FAILURE);
     }
-    else
-    {
-      total_likelihood += it->second;
-    }
-  }
 
-  return total_likelihood;
+    std::map<std::string, double> string_to_prob_cache;
+    std::map<std::string, double>::const_iterator it;
+
+    for (const auto& i : m_consensus_pID_collection) {
+        it = string_to_prob_cache.find(i.second.m_heterozygous_loci_string);
+        if (it == string_to_prob_cache.end()) {
+            // new sequence
+            temp = i.second.log_prob(s, r);
+            string_to_prob_cache.emplace(i.second.m_heterozygous_loci_string, temp);
+            total_likelihood += temp;
+        }
+        else {
+            total_likelihood += it->second;
+        }
+    }
+
+    return total_likelihood;
 }
 
+// PCR STUFF:
 d_hamming_return_type alignment::calculate_PCR_mismatches() const
 {
-  double mismatches = 0;
-  uint64_t trials = 0;
-  uint64_t numberN = 0;
+    double mismatches = 0;
+    uint64_t valid_trials = 0;
+    uint64_t Ns = 0;
 
-  std::map<char, int> current_loci;
+    int cov;
+    ranked_DNA_list ranks;
 
-  // bool PCRerror;
-  // int where;
+    char wt, mt;
+    int num_wt, num_mt;
 
-  int cov;
-  // double fracMajor;
-  ranked_DNA_list ranker;
-  double p;
+    double p;
 
-  for (const auto& i : collision_free_primerID_map)
-  {
-    cov = i.second.size();
-    // PCRerror = false;
+    for (const auto& i : m_collision_free_pID_collection) {
+        cov = i.second.size();
+        // PCRerror = false;
 
-    for (int j : _reference.homozygous_loci)
-    {
-      // 1.) perform pileup
-      current_loci = { { 'A', 0 }, { 'C', 0 }, { 'G', 0 }, { 'T', 0 }, { 'N', 0 } };
+        for (int j : m_reference.m_homozygous_loci) {
+            // 1.) perform pileup
+            ranks.reset();
 
-      for (int k = 0; k < cov; ++k)
-      {
-        ++current_loci[(i.second[k])->_fullRead[j]];
-      }
+            for (const auto& k : i.second) {
+                ranks.add_base(k->m_fullRead[j]);
+            }
 
-      // 2.) perform ranking
-      ranker(current_loci);
+            // 2.) perform ranking
+            std::tie<char, int>(wt, num_wt) = ranks.get_rank_base(0);
+            std::tie<char, int>(mt, num_mt) = ranks.get_rank_base(1);
 
-      if (ranker.no_N >= 2)
-        continue;
+            if (ranks.get_ambig_count() >= 2) {
+                ++Ns;
+                continue;
+            }
 
-      ++trials;
+            ++valid_trials;
 
-      if (ranker.no_mt <= 2)
-        continue;
+            if (ranks.get_total_mt_count() <= 2)
+                continue;
 
-      p = PCR_prob(ranker.no_mt, ranker.no_mt + ranker.no_wt, 2);
-      mismatches += p;
-
-      /*
-			   if (p > 0.995)
-			   {
-			        PCRerror = true;
-			        where = j;
-			   }
-			 */
+            p = PCR_prob(num_mt, num_mt + num_wt, 2);
+            mismatches += p;
+        }
     }
 
-    /*
-		   if ((PCRerror) && (cov > 10))
-		   {
-		        std::cout << i->first << " (" << where << ")\n";
-
-		        for (std::vector<proper_read>::const_iterator x = i->second->begin(); x != i->second->end(); ++x)
-		        {
-		                std::cout << x->homozygous_loci_string << '\n';
-		        }
-		        std::cout << '\n';
-		   }
-		 */
-  }
-
-  return d_hamming_return_type(mismatches, trials, numberN);
+    return d_hamming_return_type(mismatches, valid_trials, Ns);
 }
 
-void alignment::calculate_effective_RNA_number() const
+// STATISTICS STUFF:
+void alignment::add_to_merge_statistics(seq_statistics& merge_into) const
 {
-  int eff_N = raw_primerID_map.size() + round(0.5 * number_singletons * number_singletons / number_collisions);
-
-  std::cout << "        Number RNAs: " << eff_N;
+    merge_into.mergestatistics(this->m_pid_stats);
 }
 
+// DISPLAY I/O:
 void alignment::show_recombination_patterns() const
 {
-  for (const auto& i : consensus_primerID_map)
-  {
-    if (i.second.best_reference == i.second._ref.K)
-    {
-      // recombinant
-      std::cout << i.first << " (" << i.second.multiplicity << ")\n";
+    for (const auto& i : m_consensus_pID_collection) {
+        if (i.second.m_best_reference == i.second.m_ref.m_K) {
+            // recombinant
+            std::cout << i.first << " (" << i.second.m_multiplicity << ")\n";
 
-      for (const auto& j : i.second._ref.all_reference_strains)
-      {
-        std::cout << j.name << '\t';
+            for (const auto& j : i.second.m_ref.m_all_reference_strains) {
+                std::cout << j.m_name << '\t';
 
-        for (int k : i.second._ref.heterozygous_loci)
-        {
-          if ((i.second._fullRead[k] == 'N') || (i.second._fullRead[k] == j.heterozygous_loci_string[k]))
-            std::cout << i.second._fullRead[k];
-          else
-            std::cout << ' ';
+                for (int k : i.second.m_ref.m_heterozygous_loci) {
+                    if ((i.second.m_fullRead[k] == 'N') || (i.second.m_fullRead[k] == j.m_heterozygous_loci_string[k]))
+                        std::cout << i.second.m_fullRead[k];
+                    else
+                        std::cout << ' ';
+                }
+
+                std::cout << '\n';
+            }
+
+            std::cout << '\n';
         }
-
-        std::cout << '\n';
-      }
-
-      std::cout << '\n';
     }
-  }
-}
-
-void alignment::display_raw_and_primerID_counts() const
-{
-  for (int i = 0; i < _reference.K; ++i)
-  {
-    std::cout << _reference.all_reference_strains[i].name << '\t'
-    	<< _reference.all_reference_strains[i].PID_counts << " (" << std::fixed << std::setprecision(1) << 
-				static_cast<double>(_reference.all_reference_strains[i].PID_counts) / _reference.PID_total * 100 << ")\t"
-			<< _reference.all_reference_strains[i].raw_counts	<< " (" <<
-				static_cast<double>(_reference.all_reference_strains[i].raw_counts) / _reference.raw_total * 100 << ")\n";
-  }
-
-  std::cout << "-----------------------\n";
-  std::cout << '\t' << _reference.PID_total << '\t' << _reference.raw_total;
 }
 
 void alignment::show_clone_frequencies() const
 {
-  _reference.display_strains_hetero();
+    m_reference.display_strains_abridged(m_fileStem);
 }
 
+// FILE I/O:
 void alignment::write_consensus_to_fasta() const
 {
-  int startPos = input_fileName.find_last_of('/') + 1;
-  int endPos = input_fileName.find_last_of(".sam") - 3;
+    std::string output_fileName = m_fileStem + "_cons.fasta";
 
-  std::string output_fileName = input_fileName.substr(startPos, endPos - startPos) + "_cons.fasta";
+    std::ofstream output(output_fileName.c_str());
+    int k = 0;
+    for (const auto& i : m_consensus_pID_collection) {
+        ++k;
+        output << '>' << k
+               << "_pID:" << i.first
+               << "_m:" << i.second.m_multiplicity
+               << "_T:" << (i.second.m_best_reference == i.second.m_ref.m_K ? "RECOMB" : i.second.m_ref.m_all_reference_strains[i.second.m_best_reference].m_name)
+               << "_H:" << i.second.m_hamming_distance_to_best_reference << '\n'
+               << i.second.m_fullConsensus << '\n';
+    }
 
-  std::ofstream output(output_fileName.c_str());
-  for (const auto& i : consensus_primerID_map)
-  {
-    output << '>' << i.first << '_' << i.second.multiplicity << '_' << (i.second.best_reference == i.second._ref.K ? "RECOMB" : i.second._ref.all_reference_strains[i.second.best_reference].name) << '_' << i.second.hamming_distance_to_best_reference << '\n' << i.second._fullRead << '\n';
-  }
-
-  output.close();
+    output.close();
 }
 
 void alignment::write_to_fasta() const
 {
-  int startPos = input_fileName.find_last_of('/') + 1;
-  int endPos = input_fileName.find_last_of(".sam") - 3;
+    std::string output_fileName = m_fileStem + ".fasta";
 
-  std::string output_fileName = input_fileName.substr(startPos, endPos - startPos) + ".fasta";
-
-  std::ofstream output(output_fileName.c_str());
-  for (const auto& i : collision_free_primerID_map)
-  {
-    int k = 0;
-    for (const auto& j : i.second)
-    {
-      ++k;
-      output << '>' << i.first << '_' << k << '\n' << j->_fullRead << '\n';
+    std::ofstream output(output_fileName.c_str());
+    int k = 0, m;
+    for (const auto& i : m_raw_pID_collection) {
+        ++k;
+        m = 0;
+        for (const auto& j : i.second) {
+            ++m;
+            output << '>' << k << ',' << m
+                   << "_pID:" << i.first << '\n'
+                   << j.m_fullRead << '\n';
+        }
     }
-  }
 
-  output.close();
+    output.close();
 }
 
 void alignment::write_raw_to_fasta() const
 {
-  int startPos = input_fileName.find_last_of('/') + 1;
-  int endPos = input_fileName.find_last_of(".sam") - 3;
+    std::string output_fileName = m_fileStem + "_raw.fasta";
 
-  std::string output_fileName = input_fileName.substr(startPos, endPos - startPos) + ".fasta";
-
-  std::ofstream output(output_fileName.c_str());
-  for (const auto& i : raw_primerID_map)
-  {
+    std::ofstream output(output_fileName.c_str());
     int k = 0;
-    for (const proper_read& j : i.second)
-    {
-      ++k;
-      output << '>' << i.first << '_' << k << '\n' << j._fullRead << '\n';
+    for (const auto& i : m_raw_reads) {
+        ++k;
+        output << '>' << k
+               << "_pID:" << (i.m_pID.length() == 0 ? "NA" : i.m_pID)
+               << "_i:" << i.m_num_inserts
+               << "_d:" << i.m_num_dels
+               << "_l:" << i.m_len_overhang
+               << "_v:" << (i.m_is_valid ? 'T' : 'F') << '\n'
+               << i.m_DNA << '\n';
     }
-  }
 
-  output.close();
+    output.close();
 }
 
-// alignments
-alignments::alignments(const std::vector<std::string>& inputFiles)
-    : _n(inputFiles.size()), _min_current_coverage(-1), _min_majority_fraction(-1), is_collisions_removed(false), _pid_stats(10)
+void alignment::write_frequencies_to_MATLAB(std::ofstream& output, bool pID) const
 {
-  collections_alignments.reserve(_n);
+    const std::vector<record>& strains = m_reference.m_all_reference_strains;
 
-  for (const std::string& i : inputFiles)
-  {
-    std::cout << "Loading " << i << '\n';
-    collections_alignments.emplace_back(i);
-  }
+    output << std::fixed << std::setprecision(6) << (pID ? strains[0].m_pID_frequency : strains[0].m_raw_frequency);
+
+    for (int i = 1; i < m_reference.m_K; ++i) {
+        output << ',' << (pID ? strains[i].m_pID_frequency : strains[i].m_raw_frequency);
+    }
+    output << ";\n";
 }
 
+void alignment::write_statistics_histograms() const
+{
+    m_pid_stats.write_histograms(m_fileStem);
+}
+
+void alignment::write_statistics_to_csv() const
+{
+    m_pid_stats.write_to_csv(m_fileStem);
+}
+
+// PRIVATE FUNCTIONS:
+std::string alignment::call_consensus_and_remove_collisions(std::vector<proper_read>& reads, int minDisplay, std::vector<proper_read*>& filtered_reads)
+{
+    static kmeans clustering;
+    std::string full_consensus;
+
+    if (reads.size() < m_min_current_coverage) {
+        // indecisive - coverage too low
+        full_consensus = "1";
+    }
+    else {
+        double majority_fraction;
+        int majority_size;
+        std::tie(majority_fraction, majority_size, filtered_reads, full_consensus) = clustering(reads, m_min_majority_fraction);
+
+        if (majority_fraction < m_min_majority_fraction) {
+            // collision
+            full_consensus = "0";
+        }
+        else {
+            // no collision
+            if (majority_size < m_min_current_coverage) {
+                // indecisive - coverage too low
+                full_consensus = "1";
+            }
+        }
+    }
+
+    return full_consensus;
+}
+
+void alignment::construct_sequence(const std::string& SEQ, const std::string& CIGAR, const int POS, const reference& ref, std::string& final_raw_sequence, std::string& pID, int& num_inserts, int& num_dels, int& num_N, int& len_overhang) const
+{
+    // current position in CIGAR
+    int curPos = 0;
+
+    // current position in READ
+    int curOffset = 0;
+
+    // current position on GENOME
+    // SAM is 1-based
+    int offsetRef = POS - 1;
+
+    // current length of stretch in READ
+    int curLen;
+    num_inserts = 0;
+
+    final_raw_sequence.append(offsetRef - final_raw_sequence.length(), '-');
+
+    // 1.) tokenize CIGAR
+    for (size_t i = 0; i < CIGAR.length(); ++i) {
+        if (isalpha(CIGAR[i])) {
+            curLen = stoi(CIGAR.substr(curPos, i - curPos));
+            curPos = i + 1;
+
+            switch (CIGAR[i]) {
+            case 'M':
+                final_raw_sequence.append(SEQ, curOffset, curLen);
+                curOffset += curLen;
+                offsetRef += curLen;
+                break;
+
+            case 'D':
+                final_raw_sequence.append(curLen, '-');
+                offsetRef += curLen;
+                break;
+
+            case 'I':
+                if (offsetRef == ref.m_pID_start) {
+                    num_inserts += curLen;
+                }
+
+                curOffset += curLen;
+                break;
+
+            case 'S':
+                curOffset += curLen;
+                break;
+
+            case 'H':
+                curOffset += curLen;
+                break;
+            }
+        }
+    }
+
+    // 2.) calculate statistics for reads
+    if (POS > 260) {
+        // right read
+        if (offsetRef > ref.m_pID_start) {
+            // has a pID
+            pID = final_raw_sequence.substr(ref.m_pID_start, ref.m_pID_length);
+            num_dels = std::count(pID.begin(), pID.end(), '-');
+            num_N = std::count(pID.begin(), pID.end(), 'N');
+        }
+        else {
+            // has no pID
+            pID.clear();
+            num_dels = 0;
+        }
+
+        len_overhang = std::max(offsetRef - ref.m_overhang_start, 0);
+
+        if (offsetRef > ref.m_replace_start)
+            final_raw_sequence.erase(ref.m_replace_start);
+
+        //final_raw_sequence.append(ref.genome_length - final_raw_sequence.length(), '-');
+    }
+}
+
+/* ALIGNMENTS */
+// CTOR:
+alignments::alignments(const std::vector<std::string>& inputFiles_)
+    : m_num_alignments(inputFiles_.size()), m_pid_stats(10), m_min_current_coverage(-1), m_min_majority_fraction(-1), m_is_collisions_removed(false)
+{
+    m_collections_alignments.reserve(m_num_alignments);
+
+    for (const std::string& i : inputFiles_) {
+        std::cout << "Loading " << i << '\n';
+        m_collections_alignments.emplace_back(i);
+    }
+}
+
+// PREPROCESSING:
 void alignments::filtering_QA()
 {
-  for (alignment& i : collections_alignments)
-  {
-    i.filtering_QA();
-  }
+    for (alignment& i : m_collections_alignments) {
+        i.filtering_QA();
+    }
+
+    m_is_collisions_removed = false;
 }
 
-void alignments::remove_primerID_collisions(int minC, double minMajorFraction, bool printOut)
+void alignments::remove_pID_collisions(int min_required_coverage, double min_plurality, bool report)
 {
-  _min_current_coverage = minC;
-  _min_majority_fraction = minMajorFraction;
+    m_min_current_coverage = min_required_coverage;
+    m_min_majority_fraction = min_plurality;
 
-  for (alignment& i : collections_alignments)
-  {
-    i.remove_primerID_collisions(_min_current_coverage, _min_majority_fraction, printOut, 40);
-  }
+    for (alignment& i : m_collections_alignments) {
+        i.remove_pID_collisions(m_min_current_coverage, m_min_majority_fraction, report);
+    }
+
+    m_is_collisions_removed = true;
 }
 
-/* *** RT stuff *** */
+// RT STUFF:
 double alignments::estimate_RT_substitution_rate(bool report)
 {
-  uint64_t mismatches = 0;
-  uint64_t valid_trials = 0;
-  uint64_t Ns = 0;
-  hamming_return_type temp;
+    uint64_t MLE_mismatches = 0;
+    uint64_t MLE_valid_trials = 0;
+    uint64_t MLE_Ns = 0;
+    hamming_return_type temp;
 
-  for (const alignment& i : collections_alignments)
-  {
-    temp = i.calculate_RT_mismatches();
+    // 1.) MLE
+    for (const alignment& i : m_collections_alignments) {
+        temp = i.calculate_RT_mismatches();
 
-    mismatches += std::get<0>(temp);
-    valid_trials += std::get<1>(temp);
-    Ns += std::get<2>(temp);
-  }
+        MLE_mismatches += std::get<0>(temp);
+        MLE_valid_trials += std::get<1>(temp);
+        MLE_Ns += std::get<2>(temp);
+    }
 
-  _RT_sub_rate = static_cast<double>(mismatches) / valid_trials;
-  _RT_sub_rate_CI_lower = boost::math::binomial_distribution<>::find_lower_bound_on_p(valid_trials, mismatches, 0.025);
-  _RT_sub_rate_CI_upper = boost::math::binomial_distribution<>::find_upper_bound_on_p(valid_trials, mismatches, 0.025);
+    double RT_sub_rate_MLE = static_cast<double>(MLE_mismatches) / MLE_valid_trials;
+    double RT_sub_rate_MLE_CI_lower = boost::math::binomial_distribution<>::find_lower_bound_on_p(MLE_valid_trials, MLE_mismatches, 0.025);
+    double RT_sub_rate_MLE_CI_upper = boost::math::binomial_distribution<>::find_upper_bound_on_p(MLE_valid_trials, MLE_mismatches, 0.025);
 
-  if (report)
-  {
-    std::cout << std::string(50, '=') << '\n';
-    std::cout << "RT substitution rate" << '\n';
-    std::cout << "-----------------------\n";
-    std::cout << '\n';
+    // 2.) MoM-estimator
+    uint64_t mismatches;
+    uint64_t valid_trials;
+    uint64_t Ns;
 
-    std::cout << "           mt bases: " << mismatches << '\n';
-    std::cout << "        Total bases: " << valid_trials << '\n';
-    std::cout << "          'N' bases: " << Ns << '\n';
-    std::cout << '\n';
+    double temp_rate;
+    std::vector<double> vector_mt_freqs, log_vector_mt_freqs;
 
-    std::cout << "   Est. RT sub rate: " << std::scientific << std::setprecision(2) << _RT_sub_rate << '\n';
-    std::cout << "             95% CI: [" << _RT_sub_rate_CI_lower << ", " << _RT_sub_rate_CI_upper << "]\n";
+    std::cout << std::scientific << std::setprecision(3);
 
-    std::cout << std::string(50, '=') << '\n';
-  }
+    for (const auto& i : reference::m_shared_homozygous_loci) {
+        mismatches = 0;
+        valid_trials = 0;
+        Ns = 0;
 
-  return _RT_sub_rate;
-}
+        for (const auto& j : m_collections_alignments) {
+            temp = j.count_mismatches_at_locus(i);
 
-double alignments::calculate_RT_LogLik_recombination(double s, double r) const
-{
-  double total_likelihood = 0;
+            mismatches += std::get<0>(temp);
+            valid_trials += std::get<1>(temp);
+            Ns += std::get<2>(temp);
+        }
 
-  for (const alignment& i : collections_alignments)
-    total_likelihood += i.LogLik(s, r);
+        temp_rate = static_cast<double>(mismatches) / valid_trials;
+        vector_mt_freqs.push_back(temp_rate);
+        log_vector_mt_freqs.push_back(log(temp_rate));
+    }
 
-  return total_likelihood;
-}
+    double sample_size = vector_mt_freqs.size();
 
-double alignments::neg_LogLik_recombination(double s, double r) const
-{
-  return -calculate_RT_LogLik_recombination(s, r);
+    // arithmetic mean:
+    double MoM_mu = gsl_stats_mean(vector_mt_freqs.data(), 1, sample_size);
+    double MoM_sigma = gsl_stats_variance_m(vector_mt_freqs.data(), 1, sample_size, MoM_mu);
+
+    double RT_sub_rate_MoM = MoM_mu;
+    double RT_sub_rate_MoM_CI_lower = MoM_mu - gsl_cdf_tdist_Pinv(1 - 0.05 / 2, sample_size - 1) * MoM_sigma / sqrt(sample_size);
+    double RT_sub_rate_MoM_CI_upper = MoM_mu + gsl_cdf_tdist_Pinv(1 - 0.05 / 2, sample_size - 1) * MoM_sigma / sqrt(sample_size);
+
+    // geometric mean:
+    double log_MoM_mu = gsl_stats_mean(log_vector_mt_freqs.data(), 1, sample_size);
+    double log_MoM_sigma = gsl_stats_variance_m(log_vector_mt_freqs.data(), 1, sample_size, log_MoM_mu);
+
+    double RT_sub_rate_log_MoM = exp(log_MoM_mu);
+    double RT_sub_rate_log_MoM_CI_lower = exp(log_MoM_mu - gsl_cdf_tdist_Pinv(1 - 0.05 / 2, sample_size - 1) * log_MoM_sigma / sqrt(sample_size));
+    double RT_sub_rate_log_MoM_CI_upper = exp(log_MoM_mu + gsl_cdf_tdist_Pinv(1 - 0.05 / 2, sample_size - 1) * log_MoM_sigma / sqrt(sample_size));
+
+    // report
+    if (report) {
+        std::cout << std::string(50, '=') << '\n';
+        std::cout << "RT substitution rate" << '\n';
+        std::cout << "-----------------------\n";
+        std::cout << '\n';
+
+        std::cout << "   1.) MLE:\n";
+        std::cout << "           mt bases: " << MLE_mismatches << '\n';
+        std::cout << "        Total bases: " << MLE_valid_trials << '\n';
+        std::cout << "          'N' bases: " << MLE_Ns << '\n';
+        std::cout << '\n';
+        std::cout << "   Est. RT sub rate: " << std::scientific << std::setprecision(2) << RT_sub_rate_MLE << '\n';
+        std::cout << "             95% CI: [" << RT_sub_rate_MLE_CI_lower << ", " << RT_sub_rate_MLE_CI_upper << "]\n\n";
+
+        std::cout << "   2.) MoM:\n";
+        std::cout << "   Est. RT sub rate: " << std::scientific << std::setprecision(2) << RT_sub_rate_MoM << '\n';
+        std::cout << "             95% CI: [" << RT_sub_rate_MoM_CI_lower << ", " << RT_sub_rate_MoM_CI_upper << "]\n\n";
+        std::cout << "   using logarithmic transform:\n";
+        std::cout << "   Est. RT sub rate: " << std::scientific << std::setprecision(2) << RT_sub_rate_log_MoM << '\n';
+        std::cout << "             95% CI: [" << RT_sub_rate_log_MoM_CI_lower << ", " << RT_sub_rate_log_MoM_CI_upper << "]\n\n";
+
+        std::cout << std::string(50, '=') << '\n';
+    }
+
+    m_RT_sub_rate = RT_sub_rate_MLE;
+    m_RT_sub_rate_CI_lower = RT_sub_rate_MLE_CI_lower;
+    m_RT_sub_rate_CI_upper = RT_sub_rate_MLE_CI_upper;
+
+    return m_RT_sub_rate;
 }
 
 double alignments::estimate_RT_recombination_rate(bool report)
 {
-  return estimate_RT_recombination_rate(_RT_sub_rate, report);
+    return estimate_RT_recombination_rate(m_RT_sub_rate, report);
 }
 
 double alignments::estimate_RT_recombination_rate(double s, bool report)
 {
-  std::pair<double, double> result;
+    std::pair<double, double> result;
 
-  // 1.) calculate MLE
-  result = boost::math::tools::brent_find_minima([&](double r)->double
-  {return this->neg_LogLik_recombination(s, r);
-                                                 },
-                                                 1E-10, 0.9, 1000);
+    // 1.) calculate MLE
+    result = boost::math::tools::brent_find_minima([&](double r) -> double {return this->neg_LogLik_recombination(s, r);
+    }, 1E-10, 0.9, 1000);
 
-  _RT_recomb_rate = result.first;
-  _RT_LogLik = -result.second;
+    m_RT_recomb_rate = result.first;
+    m_RT_LogLik = -result.second;
 
-  // 2.) calculate 95% CI
-  uintmax_t max_iter = 1000;
-  boost::math::tools::eps_tolerance<double> tol(10000);
+    // 2.) calculate 95% CI
+    uintmax_t max_iter = 1000;
+    boost::math::tools::eps_tolerance<double> tol(10000);
 
-  // lower CI boundary
-  max_iter = 1000;
-  result = boost::math::tools::toms748_solve([&](double r)->double
-  {return this->calculate_RT_LogLik_recombination(s, r) - _RT_LogLik + 1.920729;
-                                             },
-                                             _RT_recomb_rate / 50,
-                                             _RT_recomb_rate,
-                                             tol,
-                                             max_iter);
+    // lower CI boundary
+    max_iter = 1000;
+    result = boost::math::tools::toms748_solve([&](double r) -> double {return this->calculate_RT_LogLik_recombination(s, r) - m_RT_LogLik + 1.920729;
+    }, m_RT_recomb_rate / 50, m_RT_recomb_rate, tol, max_iter);
 
-  _RT_recomb_rate_CI_lower = (result.first + result.second) / 2;
+    m_RT_recomb_rate_CI_lower = (result.first + result.second) / 2;
 
-  // upper CI boundary
-  max_iter = 1000;
-  result = boost::math::tools::toms748_solve([&](double r)->double
-  {return this->calculate_RT_LogLik_recombination(s, r) - _RT_LogLik + 1.920729;
-                                             },
-                                             _RT_recomb_rate,
-                                             _RT_recomb_rate * 50,
-                                             tol,
-                                             max_iter);
+    // upper CI boundary
+    max_iter = 1000;
+    result = boost::math::tools::toms748_solve([&](double r) -> double {return this->calculate_RT_LogLik_recombination(s, r) - m_RT_LogLik + 1.920729;
+    }, m_RT_recomb_rate, m_RT_recomb_rate * 50, tol, max_iter);
 
-  _RT_recomb_rate_CI_upper = (result.first + result.second) / 2;
+    m_RT_recomb_rate_CI_upper = (result.first + result.second) / 2;
 
-  if (report)
-  {
-    // 3.) display
-    std::cout << std::string(50, '=') << '\n';
-    std::cout << "RT recombination rate" << '\n';
-    std::cout << "-----------------------\n";
-    std::cout << '\n';
+    if (report) {
+        // 3.) display
+        std::cout << std::string(50, '=') << '\n';
+        std::cout << "RT recombination rate" << '\n';
+        std::cout << "-----------------------\n";
+        std::cout << '\n';
 
-    std::cout << "Est. RT recomb rate: " << std::scientific << std::setprecision(2) << _RT_recomb_rate << '\n';
-    std::cout << "     Log-Likelihood: " << std::fixed << std::setprecision(2) << _RT_LogLik << '\n';
-    std::cout << "             95% CI: [" << std::scientific << std::setprecision(2) << _RT_recomb_rate_CI_lower << ", " << _RT_recomb_rate_CI_upper << "]\n";
+        std::cout << "Est. RT recomb rate: " << std::scientific << std::setprecision(2) << m_RT_recomb_rate << '\n';
+        std::cout << "     Log-Likelihood: " << std::fixed << std::setprecision(2) << m_RT_LogLik << '\n';
+        std::cout << "             95% CI: [" << std::scientific << std::setprecision(2) << m_RT_recomb_rate_CI_lower << ", " << m_RT_recomb_rate_CI_upper << "]\n";
 
-    std::cout << std::string(50, '=') << '\n';
-  }
-
-  return _RT_recomb_rate;
-}
-
-/* *** PCR stuff *** */
-double alignments::estimate_PCR_substitution_rate(bool report)
-{
-  double mismatches = 0;
-  uint64_t valid_trials = 0;
-  uint64_t Ns = 0;
-  d_hamming_return_type temp;
-
-  for (const alignment& i : collections_alignments)
-  {
-    temp = i.calculate_PCR_mismatches();
-
-    mismatches += std::get<0>(temp);
-    valid_trials += std::get<1>(temp);
-    Ns += std::get<2>(temp);
-  }
-
-  _PCR_sub_rate = mismatches / valid_trials;
-  _PCR_sub_rate_CI_lower = boost::math::binomial_distribution<>::find_lower_bound_on_p(valid_trials, mismatches, 0.025);
-  _PCR_sub_rate_CI_upper = boost::math::binomial_distribution<>::find_upper_bound_on_p(valid_trials, mismatches, 0.025);
-
-  if (report)
-  {
-    std::cout << std::string(50, '=') << '\n';
-    std::cout << "PCR substitution rate" << '\n';
-    std::cout << "-----------------------\n";
-    std::cout << '\n';
-
-    std::cout << "           mt bases: " << mismatches << '\n';
-    std::cout << "        Total bases: " << valid_trials << '\n';
-    std::cout << "          'N' bases: " << Ns << '\n';
-    std::cout << '\n';
-
-    std::cout << "  Est. PCR sub rate: " << std::scientific << std::setprecision(2) << _PCR_sub_rate << '\n';
-    std::cout << "             95% CI: [" << _PCR_sub_rate_CI_lower << ", " << _PCR_sub_rate_CI_upper << "]\n";
-
-    std::cout << std::string(50, '=') << '\n';
-  }
-
-  return _PCR_sub_rate;
-}
-
-/* *** variance/overdispersion stuff *** */
-void alignments::display_raw_and_primerID_counts() const
-{
-  std::cout << std::string(50, '=') << '\n';
-  std::cout << "Overdispersion/Variance" << '\n';
-  std::cout << "-----------------------";
-
-  for (const alignment& i : collections_alignments)
-  {
-    std::cout << '\n' << i.just_fileName << '\n';
-    i.display_raw_and_primerID_counts();
-    std::cout << '\n';
-  }
-
-  std::cout << std::string(50, '=') << '\n';
-}
-
-/* *** RT bias *** */
-void alignments::write_prob_to_csv()
-{
-	_pid_stats.reset();
-	
-  for (const alignment& i : collections_alignments)
-  {
-    _pid_stats.mergestatistics(i._pid_stats);
-		i._pid_stats.write_histograms(i.fileStem);
-		i._pid_stats.write_to_csv(i.fileStem);
-		
-		//i._pid_stats.calculate_comprehensive_statistics(i.fileStem);
-  }
-	
-	_pid_stats.write_to_csv("Total");
-	//_pid_stats.calculate_comprehensive_statistics("Total");
-}
-
-/*
-void alignments::write_out_script_RT_bias_test() const
-{
-	std::ofstream Routput("EMT.R");
-	
-	// 1.) write header
-	Routput << "require(\"EMT\")\n";
-	Routput << "p = rep(1, " << 1048576 << ")/" << 1048576 << "\n\n";
-	
-	// 2.) sum up data of all experiments
-	DNAvector<unsigned int> sum(10);
-  for (const alignment& i : collections_alignments)
-  {
-		for (int j = 0; j < i.primerID_RT_histogram._n; ++j)
-		{
-			sum[j] += i.primerID_RT_histogram[j];
-		}
-  }
-	
-	// 3.) then write data to script
-	Routput << "DATA = c(" << sum[0];
-	for (int j = 1; j < 1048576; ++j)
-	{
-		Routput << ", " << sum[j];
-	}
-	Routput << ")\n\n";
-	
-	// 4.) then perform EMT
-  Routput << "multinomial.test(DATA, p, MonteCarlo=TRUE, ntrial=1E6)\n";
-	
-	Routput.close();
-}
-*/
-
-/*
-double alignments::calculate_RT_bias_pvalue() const
-{
-	int K = 1048576;
-	unsigned int Nsum = 0;
-	
-	// 1.) sum up data of all experiments first
-	DNAvector<unsigned int> sum(10);
-  for (const alignment& i : collections_alignments)
-  {
-		int DOUBLES = 0;
-		for (int j = 0; j < i.primerID_RT_histogram._n; ++j)
-		{
-			sum[j] += i.primerID_RT_histogram[j];
-			Nsum   += i.primerID_RT_histogram[j];
-			DOUBLES += (i.primerID_RT_histogram[j] >= 2);
-		}
-		std::cout << i.just_fileName << ": " << DOUBLES << '\n';
-  }
-	
-	// 2.) perform Monte Carlo simulations
-	gsl_rng* r = gsl_rng_alloc(gsl_rng_mt19937);
-	std::vector<double> p_i(K, 1.0/K);
-	std::vector<unsigned int> X(K);
-	
-	double lnP_DATA = gsl_ran_multinomial_lnpdf(K, p_i.data(), sum.data());
-	double lnP_X;
-	int no_as_extreme = 0;
-	int Ntrials = 1000;
-	
-	std::cout << std::fixed << "Calculating p-Value with\n";
-	std::cout << "Number trials: " << Ntrials << '\n';
-	std::cout << "N_sum:         " << Nsum << '\n';
-	std::cout << "lnP(DATA):     " << lnP_DATA << '\n';
-	
-	for (int i = 0; i < Ntrials; ++i)
-	{
-		gsl_ran_multinomial(r, K, Nsum, p_i.data(), X.data());
-		lnP_X = gsl_ran_multinomial_lnpdf(K, p_i.data(), X.data());
-		
-		std::cout << i+1 << ":\t" << lnP_X << '\n';
-		
-		no_as_extreme += (lnP_X <= lnP_DATA);
-	}
-	std::cout << '\n';
-	std::cout << "p-Value: " << static_cast<double>(no_as_extreme)/Ntrials << '\n';
-	
-	gsl_rng_free(r);
-	return static_cast<double>(no_as_extreme)/Ntrials;
-}
-*/
-
-/* *** chao estimator *** */
-void alignments::estimate_effective_RNA_number(bool report) const
-{
-  if (report)
-  {
-    std::cout << std::string(50, '=') << '\n';
-    std::cout << "RNA numbers" << '\n';
-    std::cout << "-----------------------";
-
-    for (const alignment& i : collections_alignments)
-    {
-      std::cout << '\n' << i.just_fileName << '\n';
-      i.calculate_effective_RNA_number();
-      std::cout << '\n';
+        std::cout << std::string(50, '=') << '\n';
     }
 
-    std::cout << std::string(50, '=') << '\n';
-  }
+    return m_RT_recomb_rate;
 }
 
-/* *** diagnostics *** */
+void alignments::plot_RT_recombination_LogLik(double upper, int n) const
+{
+    std::pair<double, double> result;
+    double CI_LogLik = calculate_RT_LogLik_recombination(m_RT_sub_rate, upper);
+
+    uintmax_t max_iter = 1000;
+    boost::math::tools::eps_tolerance<double> tol(10000);
+
+    // upper plot boundary
+    result = boost::math::tools::toms748_solve([&](double r) -> double {return this->calculate_RT_LogLik_recombination(m_RT_sub_rate, r) - CI_LogLik;
+    }, m_RT_recomb_rate / 100, m_RT_recomb_rate, tol, max_iter);
+
+    double lower = (result.first + result.second) / 2;
+
+    std::cout << "Drawing Plot from " << lower << " to " << upper << "\n";
+    double factor = 1.0 / (n - 1) * (log(upper) - log(lower));
+    factor = exp(factor);
+
+    std::vector<double> x;
+    x.reserve(n + 10);
+
+    std::vector<double> y;
+    y.reserve(n + 10);
+
+    double temp;
+
+    int I = 1;
+    for (double i = lower; i <= upper; i *= factor, ++I) {
+        x.emplace_back(i);
+
+        temp = calculate_RT_LogLik_recombination(m_RT_sub_rate, i);
+        y.emplace_back(temp);
+
+        if (I % 10 == 0)
+            std::cout << "Iteration " << std::fixed << std::setprecision(0) << I << "\tr: " << std::scientific << std::setprecision(4) << i << "\tLogLik: " << temp << '\n';
+    }
+
+    // write R file
+    std::ofstream R_Data("LogLikData.R");
+
+    R_Data << "x = c(" << std::scientific << std::setprecision(4) << x[0];
+    for (size_t i = 1; i < x.size(); ++i)
+        R_Data << ", " << x[i];
+
+    R_Data << ")\n";
+
+    R_Data << "y = c(" << std::fixed << std::setprecision(4) << y[0];
+    for (size_t i = 1; i < y.size(); ++i)
+        R_Data << ", " << y[i];
+
+    R_Data << ")\n\n";
+
+    R_Data << "LOGLIKMAX = " << std::fixed << std::setprecision(4) << m_RT_LogLik << "\n";
+    R_Data << "X_CI_LOW = " << std::scientific << std::setprecision(4) << m_RT_recomb_rate_CI_lower << "\n";
+    R_Data << "X_CI_HIGH = " << std::scientific << std::setprecision(4) << m_RT_recomb_rate_CI_upper << "\n";
+    R_Data << "r = " << std::scientific << std::setprecision(2) << m_RT_recomb_rate << "\n";
+
+    R_Data.close();
+}
+
+// PCR STUFF:
+double alignments::estimate_PCR_substitution_rate(bool report)
+{
+    double mismatches = 0;
+    uint64_t valid_trials = 0;
+    uint64_t Ns = 0;
+    d_hamming_return_type temp;
+
+    for (const alignment& i : m_collections_alignments) {
+        temp = i.calculate_PCR_mismatches();
+
+        mismatches += std::get<0>(temp);
+        valid_trials += std::get<1>(temp);
+        Ns += std::get<2>(temp);
+    }
+
+    m_PCR_sub_rate = mismatches / valid_trials;
+    m_PCR_sub_rate_CI_lower = boost::math::binomial_distribution<>::find_lower_bound_on_p(valid_trials, mismatches, 0.025);
+    m_PCR_sub_rate_CI_upper = boost::math::binomial_distribution<>::find_upper_bound_on_p(valid_trials, mismatches, 0.025);
+
+    if (report) {
+        std::cout << std::string(50, '=') << '\n';
+        std::cout << "PCR substitution rate" << '\n';
+        std::cout << "-----------------------\n";
+        std::cout << '\n';
+
+        std::cout << "           mt bases: " << mismatches << '\n';
+        std::cout << "        Total bases: " << valid_trials << '\n';
+        std::cout << "          'N' bases: " << Ns << '\n';
+        std::cout << '\n';
+
+        std::cout << "  Est. PCR sub rate: " << std::scientific << std::setprecision(2) << m_PCR_sub_rate << '\n';
+        std::cout << "             95% CI: [" << m_PCR_sub_rate_CI_lower << ", " << m_PCR_sub_rate_CI_upper << "]\n";
+
+        std::cout << std::string(50, '=') << '\n';
+    }
+
+    return m_PCR_sub_rate;
+}
+
+// DISPLAY I/O:
 void alignments::show_recombination_patterns() const
 {
-  for (const alignment& i : collections_alignments)
-  {
-    i.show_recombination_patterns();
-  }
-}
-
-void alignments::show_primerIDs_with_min_coverage(int minC) const
-{
-  for (const alignment& i : collections_alignments)
-  {
-    std::cout << i.input_fileName << '\n';
-
-    i.show_primerIDs_with_min_coverage(minC);
-  }
+    for (const alignment& i : m_collections_alignments) {
+        i.show_recombination_patterns();
+    }
 }
 
 void alignments::show_clone_frequencies() const
 {
-  for (const alignment& i : collections_alignments)
-  {
-    i.show_clone_frequencies();
-  }
+    for (const alignment& i : m_collections_alignments) {
+        i.show_clone_frequencies();
+    }
 }
 
-void alignments::plot_RT_recombination_LogLik(double lower, int n) const
-{
-  std::pair<double, double> result;
-  double CI_LogLik = calculate_RT_LogLik_recombination(_RT_sub_rate, lower);
-
-  uintmax_t max_iter = 1000;
-  boost::math::tools::eps_tolerance<double> tol(10000);
-
-  // upper plot boundary
-  result = boost::math::tools::toms748_solve([&](double r)->double
-  {return this->calculate_RT_LogLik_recombination(_RT_sub_rate, r) - CI_LogLik;
-                                             },
-                                             _RT_recomb_rate,
-                                             _RT_recomb_rate * 100,
-                                             tol,
-                                             max_iter);
-
-  double upper = (result.first + result.second) / 2;
-
-  std::cout << "Drawing Plot from " << lower << " to " << upper << "\n";
-  double factor = 1.0 / (n - 1) * (log(upper) - log(lower));
-  factor = exp(factor);
-
-  std::vector<double> x;
-  x.reserve(n + 10);
-
-  std::vector<double> y;
-  y.reserve(n + 10);
-
-  double temp;
-
-  int I = 1;
-  for (double i = lower; i <= upper; i *= factor, ++I)
-  {
-    x.emplace_back(i);
-
-    temp = calculate_RT_LogLik_recombination(_RT_sub_rate, i);
-    y.emplace_back(temp);
-
-    if (I % 50 == 0)
-      std::cout << "Iteration " << std::fixed << std::setprecision(0) << I << "\tr: " << std::scientific << std::setprecision(4) << i << "\tLogLik: " << temp << '\n';
-  }
-
-  // write R file
-  std::ofstream Routput("LogLik.R");
-
-  Routput << "x = c(" << std::scientific << std::setprecision(4) << x[0];
-  for (size_t i = 1; i < x.size(); ++i)
-    Routput << ", " << x[i];
-
-  Routput << ")\n";
-
-  Routput << "y = c(" << std::fixed << std::setprecision(4) << y[0];
-  for (size_t i = 1; i < y.size(); ++i)
-    Routput << ", " << y[i];
-
-  Routput << ")\n\n";
-
-  Routput << "require(\"sfsmisc\")\n";
-  Routput << "require(\"extrafont\")\n";
-  Routput << "loadfonts()\n";
-  Routput << "\n";
-  Routput << "pdf(\"tmp.pdf\", family=\"CM Roman\")\n";
-  Routput << "par(mar = c(3, 5.3, 3, 1))\n";
-  Routput << "par(xpd = TRUE)\n";
-  Routput << "\n";
-  Routput << "plot(x, y, type=\"n\", log=\"x\", main = \"\", axes=FALSE, xlab=\"\", ylab=\"\")\n";
-  Routput << "lines(x, y, type=\"l\")\n";
-  Routput << "\n";
-  Routput << "mtext(\"RT HMM LogLikelihood\", side=3, line = 1, cex = 1.8, font = 2)\n";
-  Routput << "\n";
-  Routput << "# x-axis\n";
-  Routput << "eaxis(1)\n";
-  Routput << "mtext(expression(italic(r)), side=1, line = 2, cex = 1.5)\n";
-  Routput << "\n";
-  Routput << "# y-axis\n";
-  Routput << "eaxis(2)\n";
-  Routput << "mtext(\"LogLik\", side=2, line = 4, cex = 1.5)\n";
-  Routput << "\n";
-  Routput << "YMIN = par(\"usr\")[3]\n";
-  Routput << "YMAX = par(\"usr\")[4]\n";
-  Routput << "\n";
-  Routput << "LOGLIKMAX = " << std::fixed << std::setprecision(4) << _RT_LogLik << " -1.920729\n";
-  Routput << "X_CI_LOW = " << std::scientific << std::setprecision(4) << _RT_recomb_rate_CI_lower << "\n";
-  Routput << "X_CI_HIGH = " << std::scientific << std::setprecision(4) << _RT_recomb_rate_CI_upper << "\n";
-  Routput << "r = " << std::scientific << std::setprecision(2) << _RT_recomb_rate << "\n";
-  Routput << "\n";
-	Routput << "lnX_CI_LOW = log(X_CI_LOW)\n";
-	Routput << "lnX_CI_HIGH = log(X_CI_HIGH)\n";
-	Routput << "lnMIDP = mean(c(lnX_CI_LOW, lnX_CI_HIGH))\n";
-	Routput << "MIDP = exp(lnMIDP)\n";
-	Routput << "\n";
-	Routput << "XSPAN = lnX_CI_HIGH - lnX_CI_LOW\n";
-	Routput << "ratio = 0.16\n";
-	Routput << "x_left = exp(lnX_CI_LOW + ratio*XSPAN)\n";
-	Routput << "x_right = exp(lnX_CI_LOW + (1-ratio)*XSPAN)\n";
-	Routput << "\n";
-	Routput << "segments(X_CI_LOW, YMIN, X_CI_LOW, LOGLIKMAX)\n";
-	Routput << "segments(X_CI_HIGH, YMIN, X_CI_HIGH, LOGLIKMAX)\n";
-	Routput << "\n";
-	Routput << "segments(r, YMIN, r, YMIN + 0.93*(LOGLIKMAX-YMIN), lty=3)\n";
-	Routput << "segments(r, YMIN + 0.97*(LOGLIKMAX-YMIN), r, YMIN + 1.05*(LOGLIKMAX-YMIN), lty=3)\n";
-	Routput << "\n";
-	Routput << "EXP = floor(log10(r))\n";
-	Routput << "BASE = signif(r, 3) / 10^EXP\n";
-	Routput << "\n";
-	Routput << "text(r, YMIN + 1.05*(LOGLIKMAX-YMIN), bquote(hat(italic(r)) == .(BASE) %*% 10^.(EXP)), pos = 3, cex = 1.0)\n";
-	Routput << "\n";
-	Routput << "arrows(X_CI_LOW, YMIN + 0.95*(LOGLIKMAX-YMIN), x_left, YMIN + 0.95*(LOGLIKMAX-YMIN), code = 1, length = 0.07)\n";
-	Routput << "arrows(x_right, YMIN + 0.95*(LOGLIKMAX-YMIN), X_CI_HIGH, YMIN + 0.95*(LOGLIKMAX-YMIN), code = 2, length = 0.07)\n";
-	Routput << "\n";
-	Routput << "text(x= MIDP, y=YMIN + 0.95*(LOGLIKMAX-YMIN), labels=\"95% CI\")\n";
-	Routput << "dev.off()\n";
-	Routput << "\n";
-	Routput << "embed_fonts(\"tmp.pdf\", outfile=\"LogLik.pdf\")\n";
-	Routput << "file.remove(\"tmp.pdf\")\n";
-
-  Routput.close();
-}
-
+// FILE I/O:
 void alignments::write_all_consensus_to_fasta() const
 {
-  for (const alignment& i : collections_alignments)
-  {
-    i.write_consensus_to_fasta();
-  }
+    for (const alignment& i : m_collections_alignments) {
+        i.write_consensus_to_fasta();
+    }
 }
 
 void alignments::write_all_to_fasta() const
 {
-  for (const alignment& i : collections_alignments)
-  {
-    i.write_to_fasta();
-  }
+    for (const alignment& i : m_collections_alignments) {
+        i.write_to_fasta();
+    }
 }
 
-void alignments::write_raw_to_fasta() const
+void alignments::write_all_raw_to_fasta() const
 {
-  for (const alignment& i : collections_alignments)
-  {
-    i.write_raw_to_fasta();
-  }
+    for (const alignment& i : m_collections_alignments) {
+        i.write_raw_to_fasta();
+    }
+}
+
+void alignments::write_frequencies_to_MATLAB() const
+{
+    std::ofstream output("Variances.m");
+
+    // 1.) raw frequencies
+    output << "Data_raw = [...\n";
+    for (const alignment& i : m_collections_alignments) {
+        i.write_frequencies_to_MATLAB(output, false);
+    }
+    output << "];\n\n";
+
+    // 2.) pID frequencies
+    output << "Data_pID = [...\n";
+    for (const alignment& i : m_collections_alignments) {
+        i.write_frequencies_to_MATLAB(output, true);
+    }
+    output << "];\n\n";
+
+    output.close();
+}
+
+void alignments::write_all_statistics()
+{
+    m_pid_stats.reset();
+
+    for (const alignment& i : m_collections_alignments) {
+        i.add_to_merge_statistics(this->m_pid_stats);
+        i.write_statistics_histograms();
+        i.write_statistics_to_csv();
+    }
+
+    m_pid_stats.write_to_csv("Total");
+}
+
+// PRIVATE FUNCTIONS:
+double alignments::calculate_RT_LogLik_recombination(double s, double r) const
+{
+    double total_likelihood = 0;
+
+    for (const alignment& i : m_collections_alignments)
+        total_likelihood += i.LogLik(s, r);
+
+    return total_likelihood;
+}
+
+double alignments::neg_LogLik_recombination(double s, double r) const
+{
+    return -calculate_RT_LogLik_recombination(s, r);
 }

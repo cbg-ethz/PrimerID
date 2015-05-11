@@ -1,5 +1,5 @@
-#ifndef _ALIGNMENT_HPP_
-#define _ALIGNMENT_HPP_
+#ifndef ALIGNMENT_HPP
+#define ALIGNMENT_HPP
 
 #include <string>
 #include <vector>
@@ -13,166 +13,160 @@
 #include "proper_read.hpp"
 #include "statistics.hpp"
 
-class alignment
-{
+struct raw_paired_read {
+    std::string m_DNA;
+    std::string m_pID;
+    int m_num_inserts;
+    int m_num_dels;
+    int m_len_overhang;
+    int m_len_pID;
+    bool m_is_valid;
+
+    raw_paired_read(const raw_paired_read&) = default; // Copy constructor
+    raw_paired_read(raw_paired_read&&) = default; // Move constructor
+    raw_paired_read& operator=(const raw_paired_read&)& = default; // Copy assignment operator
+    raw_paired_read& operator=(raw_paired_read&&)& = default; // Move assignment operator
+    ~raw_paired_read() = default;
+
+    // practically used ctor:
+    raw_paired_read(
+        std::string&& DNA_,
+        std::string&& pID_,
+        int num_inserts_,
+        int num_dels_,
+        int len_overhang_,
+        int len_pID_,
+        bool is_valid_)
+        : m_DNA(std::move(DNA_)), m_pID(std::move(pID_)), m_num_inserts(num_inserts_), m_num_dels(num_dels_), m_len_overhang(len_overhang_), m_len_pID(len_pID_), m_is_valid(is_valid_) {}
+}; // store raw reads from SAM data
+
+class alignment {
+public:
+    // CTOR:
+    alignment(const std::string& fileName_);
+
+    // PREPROCESSING:
+    void filtering_QA();
+    void remove_pID_collisions(int min_required_coverage, double min_plurality, bool report = false);
+
+    // RT STUFF:
+    hamming_return_type count_mismatches_at_locus(int locus) const;
+    hamming_return_type calculate_RT_mismatches() const;
+    double LogLik(double s, double r) const;
+
+    // PCR STUFF:
+    d_hamming_return_type calculate_PCR_mismatches() const;
+
+    // STATISTICS STUFF:
+    void add_to_merge_statistics(seq_statistics&) const;
+
+    // DISPLAY I/O:
+    void show_recombination_patterns() const;
+    void show_clone_frequencies() const;
+
+    // FILE I/O:
+    void write_consensus_to_fasta() const;
+    void write_to_fasta() const;
+    void write_raw_to_fasta() const;
+    void write_frequencies_to_MATLAB(std::ofstream& output, bool pID) const;
+
+    void write_statistics_histograms() const;
+    void write_statistics_to_csv() const;
+
 private:
-  reference _reference;
-	
-	// store raw reads from SAM data
-	struct raw_paired_read {
-		const std::string DNA;
-		const std::string PrimerID;
-		int no_inserts;
-		int no_dels;
-		int len_overhang;
-		int len_pID;
-		
-		raw_paired_read(
-			std::string&& strDNA,
-			std::string&& strPrimerID,
-			int i_no_inserts,
-			int i_no_dels,
-			int i_len_overhang,
-			int i_len_pID) :
-		DNA(std::move(strDNA)),
-		PrimerID(std::move(strPrimerID)),
-		no_inserts(i_no_inserts),
-		no_dels(i_no_dels),
-		len_overhang(i_len_overhang),
-		len_pID(i_len_pID) {}
-	};
-	
-	// collection of raw PAIRED reads
-	std::vector<raw_paired_read> _raw_reads;
-	
-	// map of primerID -> PCR ensembl
-  std::map<std::string, std::vector<proper_read>  > raw_primerID_map;
+    // I/O PARAMETERS:
+    std::string m_input_fileName;
+    std::string m_fileName;
+    std::string m_fileStem;
 
-  // map of primerID -> collision-free PCR ensembl
-  std::map<std::string, std::vector<proper_read*> > collision_free_primerID_map;
+    // DATA:
+    reference m_reference; // reference copy, 5VM frequencies
+    std::vector<raw_paired_read> m_raw_reads; // collection of raw PAIRED reads
+    std::vector<std::pair<std::string, std::vector<proper_read>>> m_raw_pID_collection; // map of pID -> PCR ensembl
+    std::vector<std::pair<std::string, std::vector<proper_read*>>> m_collision_free_pID_collection; // map of pID -> collision-free PCR ensembl
+    std::vector<std::pair<std::string, consensus_read>> m_consensus_pID_collection; // map of pID -> consensus sequence of collision-free PCR ensembl
 
-  // map of primerID -> consensus sequence of collision-free PCR ensembl
-  std::map<std::string, consensus_read> consensus_primerID_map;
+    // STATISTICS:
+    seq_statistics m_pid_stats;
 
-	std::string call_consensus_and_remove_collisions(std::vector<proper_read>& reads, int minDisplay, const std::string& PrimerID, std::vector<proper_read*>& filtered_reads);
-	
-public:
-	// primerID statistics
-	seq_statistics _pid_stats;
-	
-  int number_singletons;
-  int number_collisions;
-  int number_indecisive;
+    int m_number_singletons;
+    int m_number_collisions;
+    int m_number_indecisive;
 
-  int mismatches;
-  int valid_trials;
-  int Ns;
+    int m_mismatches;
+    int m_valid_trials;
+    int m_Ns;
 
-  std::string input_fileName;
-  std::string just_fileName;
-	std::string fileStem;
+    // PARAMETERS:
+    size_t m_min_current_coverage;
+    double m_min_majority_fraction;
 
-  size_t _min_current_coverage;
-  double _min_majority_fraction;
-
-  // member functions:
-  alignment(const std::string& fileName);
-
-	void filtering_QA();
-  void remove_primerID_collisions(int minC, double minMajorFraction, bool report = true, int minDisplay = 0);
-
-  // RT stuff
-  hamming_return_type calculate_RT_mismatches() const;
-  double LogLik(double s, double r) const;
-
-  // PCR stuff
-  d_hamming_return_type calculate_PCR_mismatches() const;
-
-  // variance/overdispersion stuff
-  void display_raw_and_primerID_counts() const;
-
-  // chao estimator
-  void calculate_effective_RNA_number() const;
-
-  // diagnostics
-  void show_recombination_patterns() const;
-  void show_primerIDs_with_min_coverage(size_t minC) const;
-  void show_clone_frequencies() const;
-
-  void write_consensus_to_fasta() const;
-  void write_to_fasta() const;
-  void write_raw_to_fasta() const;
+    // PRIVATE FUNCTIONS:
+    std::string call_consensus_and_remove_collisions(std::vector<proper_read>& reads, int minDisplay, std::vector<proper_read*>& filtered_reads);
+    void construct_sequence(const std::string& SEQ, const std::string& CIGAR, const int POS, const reference& ref, std::string& final_raw_sequence, std::string& pID, int& num_inserts, int& num_dels, int& num_N, int& len_overhang) const;
 };
 
-class alignments
-{
+class alignments {
 public:
-  size_t _n;
+    // CTOR:
+    alignments(const std::vector<std::string>& inputFiles_);
 
-  std::vector<alignment> collections_alignments;
+    // PREPROCESSING:
+    void filtering_QA();
+    void remove_pID_collisions(int min_required_coverage, double min_plurality, bool report = false);
 
-  int _min_current_coverage;
-  double _min_majority_fraction;
+    // RT STUFF:
+    double estimate_RT_substitution_rate(bool report = false);
 
-  bool is_collisions_removed;
+    double estimate_RT_recombination_rate(bool report = false);
+    double estimate_RT_recombination_rate(double s, bool report = false);
 
-  double calculate_RT_LogLik_recombination(double s, double r) const;
-  double neg_LogLik_recombination(double s, double r) const;
+    void plot_RT_recombination_LogLik(double upper = 1E-5, int n = 100) const;
 
-public:
-	// primerID statistics
-	seq_statistics _pid_stats;
-	
-  double _RT_sub_rate;
-  double _RT_sub_rate_CI_lower;
-  double _RT_sub_rate_CI_upper;
+    // PCR STUFF:
+    double estimate_PCR_substitution_rate(bool report = false);
 
-  double _RT_recomb_rate;
-  double _RT_recomb_rate_CI_lower;
-  double _RT_recomb_rate_CI_upper;
-  double _RT_LogLik;
+    // DISPLAY I/O:
+    void show_recombination_patterns() const;
+    void show_clone_frequencies() const;
 
-  double _PCR_sub_rate;
-  double _PCR_sub_rate_CI_lower;
-  double _PCR_sub_rate_CI_upper;
+    // FILE I/O:
+    void write_all_consensus_to_fasta() const;
+    void write_all_to_fasta() const;
+    void write_all_raw_to_fasta() const;
+    void write_frequencies_to_MATLAB() const;
+    void write_all_statistics();
 
-  alignments(const std::vector<std::string>& inputFiles);
+private:
+    // DATA:
+    size_t m_num_alignments; // number of input alignments
+    std::vector<alignment> m_collections_alignments; // holds all alignment objects
 
-	void filtering_QA();
-  void remove_primerID_collisions(int minC = 10, double minMajorFraction = 0.9,
-                                  bool printOut = false);
-  void calculate_effective_population_size();
+    // STATISTICS:
+    seq_statistics m_pid_stats;
 
-  // RT stuff
-  double estimate_RT_substitution_rate(bool report = false);
+    double m_RT_sub_rate;
+    double m_RT_sub_rate_CI_lower;
+    double m_RT_sub_rate_CI_upper;
 
-  double estimate_RT_recombination_rate(bool report = false);
-  double estimate_RT_recombination_rate(double s, bool report = false);
+    double m_RT_recomb_rate;
+    double m_RT_recomb_rate_CI_lower;
+    double m_RT_recomb_rate_CI_upper;
+    double m_RT_LogLik;
 
-  // PCR stuff
-  double estimate_PCR_substitution_rate(bool report = false);
-  double estimate_PCR_recombinant_fraction(bool report = false);
+    double m_PCR_sub_rate;
+    double m_PCR_sub_rate_CI_lower;
+    double m_PCR_sub_rate_CI_upper;
 
-  // variance/overdispersion stuff
-  void display_raw_and_primerID_counts() const;
-	
-	// bias
-	void write_prob_to_csv();
-	double calculate_RT_bias_pvalue() const;
+    // PARAMETERS:
+    int m_min_current_coverage;
+    double m_min_majority_fraction;
 
-  // chao estimator
-  void estimate_effective_RNA_number(bool report = false) const;
+    bool m_is_collisions_removed;
 
-  // diagnostics
-  void show_recombination_patterns() const;
-  void show_primerIDs_with_min_coverage(int minC = 100) const;
-  void show_clone_frequencies() const;
-
-  void plot_RT_recombination_LogLik(double lower = 1E-6, int n = 1000) const;
-
-  void write_all_consensus_to_fasta() const;
-  void write_all_to_fasta() const;
-  void write_raw_to_fasta() const;
+    // PRIVATE FUNCTIONS:
+    double calculate_RT_LogLik_recombination(double s, double r) const;
+    double neg_LogLik_recombination(double s, double r) const;
 };
 
-#endif /* _ALIGNMENT_HPP_ */
+#endif /* ALIGNMENT_HPP */

@@ -1,52 +1,48 @@
-#ifndef _PROPER_READ_HPP_
-#define _PROPER_READ_HPP_
+#ifndef PROPER_READ_HPP
+#define PROPER_READ_HPP
 
 #include <vector>
 #include <string>
 
 #include "reference.hpp"
 
-struct proper_read
-{
-  // reference stuff
-  const reference&   _ref;
-	const std::string& _fullRead;
+class proper_read {
+public:
+    // REFERENCE STUFF:
+    const reference& m_ref;
+    const std::string& m_fullRead;
 
-  int best_reference;
-  int hamming_distance_to_best_reference;
+    int m_best_reference;
+    int m_hamming_distance_to_best_reference;
 
-  int no_N;
-  int no_of_valid_heterozygous_bases;
+    int m_num_N;
+    int m_num_of_valid_heterozygous_bases;
 
-  /* actual sequence data */
-  // heterozygous
-  std::string heterozygous_loci_string;
-  // std::vector<int> indices_valid_heterozygous;
+    // HETEROZYGOUS LOCI STRING:
+    std::string m_heterozygous_loci_string;
 
-  // homozygous
-  //std::string homozygous_loci_string;
+    // MEMBER FUNCTIONS:
+    proper_read(const std::string& DNA_, const reference& reference_);
 
-  /* member functions*/
-  proper_read(const std::string& strDNA, const reference& _reference);
-
-  //hamming_return_type calculate_homozygous_mismatches() const;
-  hamming_return_type hetero_hamming_distance(const std::string& other_string) const;
-  hamming_return_type hetero_hamming_distance(const proper_read& other_read) const;
+    hamming_return_type hetero_hamming_distance(const std::string& other_string) const;
+    hamming_return_type hetero_hamming_distance(const proper_read& other_read) const;
 };
 
-struct consensus_read : public proper_read
-{
-	const std::string  _fullConsensus;
-	int multiplicity;
-	
-  using proper_read::proper_read;
-  consensus_read(std::string&& input, const reference& _reference, int _multiplicity);
-	
-	hamming_return_type calculate_homozygous_mismatches() const;
+class consensus_read : public proper_read {
+public:
+    // CONTAINS FULL CONSENSUS SEQUENCE:
+    const std::string m_fullConsensus;
+    int m_multiplicity;
 
-  // s:  substitution rate
-  // r: recombination rate
-  double log_prob(double s, double r) const;
+    // MEMBER FUNCTIONS:
+    using proper_read::proper_read;
+    consensus_read(std::string&& input_, const reference& reference_, int multiplicity_);
+
+    hamming_return_type calculate_homozygous_mismatches() const;
+
+    // s:  substitution rate
+    // r: recombination rate
+    double log_prob(double s, double r) const;
 };
 
-#endif /* _PROPER_READ_HPP_ */
+#endif /* PROPER_READ_HPP */

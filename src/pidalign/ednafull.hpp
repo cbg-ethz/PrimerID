@@ -16,13 +16,13 @@
  * PIDalign. If not, see <http://www.gnu.org/licenses/>.
  */
 
-namespace seqan
-{
+namespace seqan {
 
-struct Ednafull_ {};
+struct Ednafull_ {
+};
 typedef Ednafull_ ScoreSpecEdnafull;
 
-typedef Score<int, ScoreMatrix<Iupac, ScoreSpecEdnafull> > Ednafull;
+typedef Score<int, ScoreMatrix<Iupac, ScoreSpecEdnafull>> Ednafull;
 
 template <typename TScore>
 struct ScoringMatrixData_<TScore, Iupac, ScoreSpecEdnafull>;
@@ -34,7 +34,8 @@ struct ScoringMatrixData_<int, Iupac, ScoreSpecEdnafull> {
         TAB_SIZE = VALUE_SIZE * VALUE_SIZE
     };
 
-    static inline int const * getData() {
+    static inline int const* getData()
+    {
         //SEQAN_CHECKPOINT;
         //Entropy =   0.1424, Expected =  -0.1074
         static int const _data[TAB_SIZE] = {
@@ -58,6 +59,4 @@ struct ScoringMatrixData_<int, Iupac, ScoreSpecEdnafull> {
         return _data;
     }
 };
-
 }
-
