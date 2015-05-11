@@ -223,7 +223,7 @@ std::vector<intType> ran_mult_hypergeometric(const std::vector<uint64_t>& pop, i
 intType random_seed()
 {
     intType random_seed;
-    std::ifstream file("/dev/random", std::ios::binary);
+    std::ifstream file("/dev/urandom", std::ios::binary);
     if (file.is_open()) {
         char* memblock;
         intType size = sizeof(intType);
@@ -234,7 +234,7 @@ intType random_seed()
         delete[] memblock;
     }
     else {
-        std::cerr << "Could not open /dev/random for generating a seed!\n";
+        std::cerr << "Could not open /dev/urandom for generating a seed!\n";
         exit(EXIT_FAILURE);
     }
 
@@ -353,7 +353,7 @@ int main(int argc, char* argv[])
     // start simulation
     boost::thread_group all_threads;
     for (int t = 0; t < number_threads; ++t) {
-        all_threads.add_thread(new boost::thread(run_simulation, t, boost::ref(rank_abundances[t]), boost::ref(rank_occurrences[t])));
+        all_threads.create_thread(std::bind(run_simulation, t, boost::ref(rank_abundances[t]), boost::ref(rank_occurrences[t])));
     }
     all_threads.join_all();
 
