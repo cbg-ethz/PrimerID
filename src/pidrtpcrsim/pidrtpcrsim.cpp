@@ -176,7 +176,6 @@ std::vector<intType> ran_mult_hypergeometric(const std::vector<uint64_t>& pop, i
 {
     std::vector<intType> sample(bins, 0);
     std::vector<uint64_t> part_sum;
-    //part_sum.reserve(bins);
     part_sum.resize(bins);
 
     // 1.) pile-up counts for later determination of cluster
@@ -198,9 +197,6 @@ std::vector<intType> ran_mult_hypergeometric(const std::vector<uint64_t>& pop, i
     item_inventory.erase(std::unique(item_inventory.begin(), item_inventory.end()), item_inventory.end());
     std::shuffle(item_inventory.begin(), item_inventory.end(), generator);
 
-    //std::cout << "Samplesize: " << sample_size << '\n';
-    //std::cout << "Vectorsize: " << item_inventory.size() << '\n';
-
     // 3.) fill sample vector
     std::vector<uint64_t>::const_iterator it;
     intType valid_samples = 0;
@@ -220,17 +216,6 @@ std::vector<intType> ran_mult_hypergeometric(const std::vector<uint64_t>& pop, i
 
         ++I;
     }
-
-    //for(auto& i : sample)
-    //{
-    //	if (i < min_coverage)
-    //		i = 0;
-    //}
-    //
-    //std::cout << "Validsampl: " << valid_samples << '\n';
-    //std::cout << "   Final i: " << I << '\n';
-    //std::cout << "Sample sum: " << std::accumulate(sample.begin(), sample.end(), 0) << '\n';
-    //std::cout << '\n';
 
     return sample;
 }
