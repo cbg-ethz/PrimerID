@@ -21,7 +21,7 @@ record::record(const std::string& DNA_, const std::string& name_)
 
 // reference
 reference::reference(const std::string& fileName_, referenceType variant_)
-    : m_referenceFile(fileName_), m_reference_variant(variant_), m_raw_total(0), m_pID_total(0), m_freq_initialised(false), m_num_heterozygous_loci(0), m_num_homozygous_loci(0)
+    : m_referenceFile(fileName_), m_reference_variant(variant_), m_raw_total(0), m_pID_total(0), m_freq_initialised(false), attempted_consensus_assignments(0), m_num_heterozygous_loci(0), m_num_homozygous_loci(0)
 {
     m_fileName = boost::filesystem::path(m_referenceFile).filename().string();
     m_fileStem = boost::filesystem::path(m_referenceFile).stem().string();
@@ -234,12 +234,15 @@ void reference::display_strains_abridged(const std::string& input_fileName) cons
         std::printf("%-7s%6.2f%% (%6d)%12.2f%% (%5d)\n", i.m_name.c_str(), i.m_raw_frequency * 100, i.m_raw_counts, i.m_pID_frequency * 100, i.m_pID_counts);
     }
     std::printf("\nTOTAL:%16d%21d\n", m_raw_total, m_pID_total);
+	std::printf("\nAttempted pID Assignments: %d (%.1f%%)\n", attempted_consensus_assignments, 100.0 * m_pID_total / attempted_consensus_assignments );
 
     std::cout << std::string(50, '=') << '\n';
 }
 
 void reference::assign_counts(const std::string& read, bool consensus)
 {
+	attempted_consensus_assignments += consensus;
+	
     int min_dist = 1000;
     int index = m_K;
 
@@ -309,4 +312,5 @@ void reference::reset_consensus_counts()
     }
 
     m_freq_initialised = false;
+	attempted_consensus_assignments = 0;
 }
