@@ -1,11 +1,11 @@
 dnl Initialise Autoconf
 AC_PREREQ([2.69])
 AC_INIT(
-	[PIDalyse],
+	[pIDalyse],
 	[0.1],
 	[david.seifert@bsse.ethz.ch],
 	[pidalyse],
-	[https://github.com/SoapZA/PrimerID])
+	[https://github.com/cbg-ethz/PrimerID])
 AC_CONFIG_HEADERS([config.h])
 AC_CONFIG_SRCDIR([src/pidalyse/main.cpp])
 AC_LANG([C++])
