@@ -55,7 +55,7 @@ public:
 
     std::vector<record> m_all_reference_strains;
     bool m_freq_initialised;
-	int attempted_consensus_assignments;
+    int attempted_consensus_assignments;
 
     // LOCI INFORMATION:
     std::vector<int> m_included_loci;
