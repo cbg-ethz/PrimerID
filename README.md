@@ -67,7 +67,7 @@ A number of external programs are also required:
 
 9.  **R**; latest release (http://www.r-project.org)
 
-    R is used to produce most plots. In addition, you will require the following R packages too:
+    R is used to produce most plots. In addition, you will require the following R packages:
     - plotrix
     - RColorBrewer
     - sfsmisc
@@ -75,7 +75,7 @@ A number of external programs are also required:
     - grid
     - gridExtra
     - VennDiagram
-    - tikzDevice (optional, instead of PDF output)
+    - tikzDevice (optional, used instead of PDF output)
 
 10. **MATLAB**; R2014b release (http://www.mathworks.com/products/matlab)
 
@@ -84,51 +84,102 @@ A number of external programs are also required:
 Furthermore, you will require a compiler that can handle **C++0x** (which includes all C++11 compilers). Our pipeline has been developed on OS X 10.10 and has employed the LLVM/Clang C/C++ toolchain provided by XCode.
 
 ## Preparing
+Compile the required programs by running
+```
+./autogen.sh
+./configure SEQAN_INCLUDEDIR=<PATH TO SEQAN> CXX=clang++
+make -j2
+```
+We have used Clang as CXX compiler here; GCC should also work.
 
+## Folder structure
+In order to ease reproduction, you should retain the folder structure as given by the git repository
+```
+scripts/
+├── Alignments
+├── Analysis
+├── Comparing\ estimators
+│   └── DetermineFreqs
+├── Figure\ 2\ -\ qPCR\ Efficiency
+├── Figure\ 3,S9\ -\ Histograms
+├── Figure\ 4\ -\ Motifs
+│   └── seqLogo
+├── Figure\ 5,6\ -\ pID\ bias
+├── Figure\ S15\ -\ HMM\ LogLik
+├── Figure\ S18,S19\ -\ Bias\ and\ Variance
+├── PreprocessedData
+├── RawData
+└── References
+```
+Download the raw data and place it directly under the `RawData` directory tree.
+
+## Preprocessing
+You will need to remove low-quality reads in order not to contaminate the analysis. Preprocess the data by running
+```
+cd scripts/
+cd PreprocessedData/
+./preprocess.sh
+```
+Taking care to adjust the environmental flags _PRINSEQ_ and _FASTQ_MASKER_ in the bash script `preprocess.sh` to match the location of your executables.
+
+## Alignment
+Perform the alignment by doing
+```
+cd Alignments/
+./align.sh
+```
+
+## pIDalyse
+After succesfully building the executables, run pIDalyse on the data by performing
+```
+cd Analysis/
+../../pidalyse --r3223 ../References/5VM_3223.fasta --r3236 ../References/5VM_3236.fasta ../Alignments/32???/32???_nucMask_2.sam
+```
+This will produce a plethora of information and statistics, like for instance the estimators respectively mutant frequencies.
 
 ## Reproducing statistics
 ### Figures
 - Figure 2:
-```
-cd Figure\ 2\ -\ qPCR\ Efficiency/
-R CMD BATCH Figure2.R
-cd ..
-```
+  ```
+  cd Figure\ 2\ -\ qPCR\ Efficiency/
+  R CMD BATCH Figure2.R
+  cd ..
+  ```
 
 - Figure 3 & S9 (**requires output of pIDalyse**):
-```
-cd Figure\ 3\,S9\ -\ Histograms/
-R CMD BATCH Figure3_S9.R
-cd ..
-```
+  ```
+  cd Figure\ 3\,S9\ -\ Histograms/
+  R CMD BATCH Figure3_S9.R
+  cd ..
+  ```
 
 - Figure 4 (**requires output of pIDalyse**):
-```
-cd Figure\ 4\ -\ Motifs/
-R CMD BATCH Figure4.R
-cd ..
-```
+  ```
+  cd Figure\ 4\ -\ Motifs/
+  R CMD BATCH Figure4.R
+  cd ..
+  ```
 
 - Figure 5 & 6 (**requires output of pIDalyse**):
-```
-cd Figure\ 5\,6\ -\ pID\ bias/
-R CMD BATCH Figure5_6.R
-cd ..
-```
+  ```
+  cd Figure\ 5\,6\ -\ pID\ bias/
+  R CMD BATCH Figure5_6.R
+  cd ..
+  ```
 
 - Figure S3-S8:
-```
-cd RawData/
-./analyse.sh
-cd ..
-```
+  ```
+  cd RawData/
+  ./analyse.sh
+  cd ..
+  ```
 
 - Figure S15:
-```
-cd Figure\ S15\ -\ HMM\ LogLik/
-R CMD BATCH FigureS15.R
-cd ..
-```
+  ```
+  cd Figure\ S15\ -\ HMM\ LogLik/
+  R CMD BATCH FigureS15.R
+  cd ..
+  ```
 
 - Figure S18 & S19:
   1. open MATLAB
@@ -139,16 +190,16 @@ cd ..
 
 ### Tables
 - Table 1:
-produced with **pIDalign** and **pIDalyse**
+  produced with **pIDalign** and **pIDalyse**
 
 - Table 2:
-produced with **pIDalyse**
+  produced with **pIDalyse**
 
 - Table 3:
-produced by **Figure5_6.R** and contained in `Figure5_6.Rout`
+  produced by **Figure5_6.R** and contained in `Figure5_6.Rout`
 
 - Table 4:
-Raw and pID frequencies are produced by **pIDalyse**. HaploClique frequencies are produced by first running HaploCloque over the trimmed alignments and then calculating frequencies:
+  Raw and pID frequencies are produced by **pIDalyse**. HaploClique frequencies are produced by first running HaploCloque over the trimmed alignments and then calculating frequencies:
   1. Run `prepare.sh` in **Comparing estimators** (Adjust the environmental variables _AMPLICONCLIPPER_, _PICARDTOOLS_ and _BWA_ to match the locations of your executables)
   2. Run `HC.sh` (this our local script, you will need to adjust this). HaploClique will likely require a larger server, as the algorithm is very computational intensive.
   3. Compile the file `DetermineFreqs/determineHCfreq.cpp` using either GCC or Clang and give it the resulting `quasispecies.fasta` file to retrieve the frequencies of the 5 clones.
