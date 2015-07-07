@@ -98,15 +98,15 @@ In order to ease reproduction, you should retain the folder structure as given b
 scripts/
 ├── Alignments
 ├── Analysis
-├── Comparing\ estimators
+├── Comparing estimators
 │   └── DetermineFreqs
-├── Figure\ 2\ -\ qPCR\ Efficiency
-├── Figure\ 3,S9\ -\ Histograms
-├── Figure\ 4\ -\ Motifs
+├── Figure 2 - qPCR Efficiency
+├── Figure 3,S9 - Histograms
+├── Figure 4 - Motifs
 │   └── seqLogo
-├── Figure\ 5,6\ -\ pID\ bias
-├── Figure\ S15\ -\ HMM\ LogLik
-├── Figure\ S18,S19\ -\ Bias\ and\ Variance
+├── Figure 5,6 - pID bias
+├── Figure S15 - HMM LogLik
+├── Figure S18,S19 - Bias and Variance
 ├── PreprocessedData
 ├── RawData
 └── References
