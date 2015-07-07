@@ -1,13 +1,11 @@
-scriptpath = dirname(sys.frame(1)$ofile) 
-
 require(lattice)
 require(grid)
 require(gridExtra)
 
-source(paste(scriptpath, "/seqLogo/pwm.R", sep = ""))
-source(paste(scriptpath, "/seqLogo/seqLogo.R", sep = ""))
-source(paste(scriptpath, "/seqLogo/AllClasses.R", sep = ""))
-source(paste(scriptpath, "/seqLogo/AllGenerics.R", sep = ""))
+source("seqLogo/pwm.R")
+source("seqLogo/seqLogo.R")
+source("seqLogo/AllClasses.R")
+source("seqLogo/AllGenerics.R")
 
 files = c("3223a", "3223b", "3223c", "3236a", "3236b", "3236c")
 types = c("_nucMask_2_unique", "_nucMask_2_replicates")

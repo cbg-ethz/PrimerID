@@ -87,7 +87,7 @@ dev.off()
 
 # 5) Venn diagrams
 require("VennDiagram")
-require(RColorBrewer)
+require("RColorBrewer")
 colours = brewer.pal(5, "Set1")
 colours[5] = "gold"
 
@@ -121,6 +121,7 @@ for (i in 1:6)
 	file = files[i]
 	ORDER = order(real_DATA[[i]]$Count, decreasing=TRUE)
 	message("Processing ", file)
+	message("Optimal parameters: ", best_match[[i]])
 	message("Rank 1  :", real_DATA[[i]]$Count[ORDER[1]])
 	message("Rank 100:", real_DATA[[i]]$Count[ORDER[INTERSECT_CUTOFF]])
 	message("Range   :", real_DATA[[i]]$Count[ORDER[1]] - real_DATA[[i]]$Count[ORDER[INTERSECT_CUTOFF]])
