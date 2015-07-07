@@ -55,7 +55,7 @@ A number of external programs are also required:
 
 6.  **bwa**; 0.7.12-r1044 release (http://bio-bwa.sourceforge.net)
 
-    To emulate a standard viral haplotype reconstruction pipeline we employ bwa as standard and well-accepted aligner.
+    To emulate a standard viral haplotype reconstruction pipeline, we employ bwa as standard and well-accepted aligner.
 
 7.  **samtools**; 1.2 release (http://github.com/samtools/samtools/releases)
 
@@ -63,7 +63,7 @@ A number of external programs are also required:
 
 8.  **HaploClique**; latest release (http://github.com/cbg-ethz/haploclique/releases)
 
-    Samtools is required for converting the SAM alignments produced by bwa to the BAM format.
+    HaploClique is a cutting-edge haplotype reconstruction tool that we use to infer frequencies when not provided with tagged DNA fragments.
 
 9.  **R**; latest release (http://www.r-project.org)
 
@@ -174,14 +174,14 @@ This will produce a plethora of information and statistics, like for instance th
   cd ..
   ```
 
-- Figure S15:
+- Figure S15 (**requires output of pIDalyse**):
   ```
   cd Figure\ S15\ -\ HMM\ LogLik/
   R CMD BATCH FigureS15.R
   cd ..
   ```
 
-- Figure S18 & S19:
+- Figure S18 & S19 (**requires output of pIDalyse**):
   1. open MATLAB
   2. open the file `pIDalyse_DATA.m` (the frequencies should be identical to the frequencies from pIDalyse)
   3. evaluate all three matrices (i.e., load them into memory)
