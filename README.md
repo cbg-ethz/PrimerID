@@ -132,6 +132,7 @@ You will need to remove low-quality reads in order not to contaminate the analys
 ```
 cd PreprocessedData/
 ./preprocess.sh
+cd ..
 ```
 Take care to adjust the environmental flags _PRINSEQ_ and _FASTQ_MASKER_ in the bash script `preprocess.sh` to match the location of your executables.
 
@@ -140,6 +141,7 @@ Perform the alignment by doing
 ```
 cd Alignments/
 ./align.sh
+cd ..
 ```
 
 ## pIDalyse
@@ -147,8 +149,9 @@ After succesfully building the executables, run pIDalyse on the data by performi
 ```
 cd Analysis/
 ../../pidalyse --r3223 ../References/5VM_3223.fasta --r3236 ../References/5VM_3236.fasta ../Alignments/32???/32???_nucMask_2.sam
+cd ..
 ```
-This will produce a plethora of information and statistics, like for instance the estimators respectively mutant frequencies.
+This will produce a plethora of information and statistics, like the estimators and mutant frequencies.
 
 ## Reproducing statistics
 ### Figures
@@ -215,5 +218,5 @@ This will produce a plethora of information and statistics, like for instance th
 - Table 4:
   Raw and pID frequencies are produced by **pIDalyse**. HaploClique frequencies are produced by first running HaploCloque over the trimmed alignments and then calculating frequencies:
   1. Run `prepare.sh` in **Comparing estimators** (Adjust the environmental variables _AMPLICONCLIPPER_, _PICARDTOOLS_ and _BWA_ to match the locations of your executables)
-  2. Run `HC.sh` (this our local script, you will need to adjust this). HaploClique will likely require a larger server, as the algorithm is very computational intensive.
+  2. Run `HC.sh` (this our local script, you will need to adjust this). HaploClique will likely require a larger server, as the algorithm is very computationally intensive.
   3. Compile the file `DetermineFreqs/determineHCfreq.cpp` using either GCC or Clang and give it the resulting `quasispecies.fasta` file to retrieve the frequencies of the 5 clones.
