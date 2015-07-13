@@ -1,5 +1,5 @@
 #!/bin/bash
-PIDALIGN=../../pidalign
+PIDALIGN=../../../pidalign
 
 # 1) Perform Needleman-Wunsch alignments
 for i in 3223 3236
