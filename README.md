@@ -2,7 +2,7 @@
 David Seifert (david.seifert@bsse.ethz.ch)
 
 ## Introduction
-The programs and scripts provided here can be used to reproduce the results of the PrimerID paper **A Comprehensive Analysis of Primer IDs to Study Heterogeneous HIV-1 Populations**.
+The programs and scripts provided here can be used to reproduce the results of the PrimerID paper **A Comprehensive Analysis of Primer IDs to Study Heterogeneous HIV-1 Populations** by Seifert et al. (2015).
 
 ## Prerequisites
 If you wish to reproduce all results, you will need the following programs for compilation
@@ -30,6 +30,10 @@ If you wish to reproduce all results, you will need the following programs for c
 6.  **SeqAn**; _at least 2.0_ (http://github.com/seqan/seqan/releases)
 
     SeqAn is the basis of the pIDalign semi-global aligner.
+
+7.  **standard Unix utilities**; such as zip/unzip, wget, etc...
+
+    If you cannot execute a command, chances are that you are missing one of the more common utilities we require in addition to the tools listed above.
 
 A number of external programs are also required:
 
@@ -70,27 +74,18 @@ A number of external programs are also required:
     R is used to produce most plots. In addition, you will require the following R packages:
     - plotrix
     - RColorBrewer
-    - sfsmisc
     - lattice
     - grid
     - gridExtra
     - VennDiagram
+    - sfsmisc (optional, used for proper scientific formatting of axes)
     - tikzDevice (optional, used instead of PDF output)
 
 10. **MATLAB**; R2014b release (http://www.mathworks.com/products/matlab)
 
     MATLAB is used to perform the likelihood ratio tests for comparing biases and variances between estimators.
 
-Furthermore, you will require a compiler that can handle **C++0x** (which includes all C++11 compilers). Our pipeline has been developed on OS X 10.10 and has employed the LLVM/Clang C/C++ toolchain provided by XCode.
-
-## Preparing
-Compile the required programs by running
-```
-./autogen.sh
-./configure SEQAN_INCLUDEDIR=<PATH TO SEQAN> CXX=clang++
-make -j2
-```
-We have used Clang as CXX compiler here; GCC should also work.
+Furthermore, you will require a compiler that can handle **C++0x** (which includes all C++11 compilers). Our pipeline has been developed on OS X 10.10 and has employed the LLVM/Clang C++ toolchain provided by XCode.
 
 ## Folder structure
 In order to ease reproduction, you should retain the folder structure as given by the git repository
@@ -111,16 +106,34 @@ scripts/
 ├── RawData
 └── References
 ```
-Download the raw data and place it directly under the `RawData` directory tree.
+
+## Preparing the programs
+Compile the required programs by running
+```
+git clone https://github.com/cbg-ethz/PrimerID.git
+cd PrimerID/
+./autogen.sh
+./configure SEQAN_INCLUDEDIR=<PATH TO SEQAN> CXX=clang++
+make -j2
+```
+We have used Clang as CXX compiler here; GCC should also work.
+
+## Retrieving the data
+Download the data by performing
+```
+cd scripts/RawData/
+wget https://n.ethz.ch/~dseifert/download/PrimerID.zip
+unzip PrimerID.zip # you will be prompted for a password, which is given in the manuscript and is at this stage not public
+cd ..
+```
 
 ## Preprocessing
 You will need to remove low-quality reads in order not to contaminate the analysis. Preprocess the data by running
 ```
-cd scripts/
 cd PreprocessedData/
 ./preprocess.sh
 ```
-Taking care to adjust the environmental flags _PRINSEQ_ and _FASTQ_MASKER_ in the bash script `preprocess.sh` to match the location of your executables.
+Take care to adjust the environmental flags _PRINSEQ_ and _FASTQ_MASKER_ in the bash script `preprocess.sh` to match the location of your executables.
 
 ## Alignment
 Perform the alignment by doing
@@ -173,6 +186,7 @@ This will produce a plethora of information and statistics, like for instance th
   ./analyse.sh
   cd ..
   ```
+  Take care to adjust the environmental flag _FASTQC_ in the bash script `analyse.sh` to match the location of your executables.
 
 - Figure S15 (**requires output of pIDalyse**):
   ```
