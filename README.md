@@ -147,6 +147,7 @@ cd ..
 ## pIDalyse
 The core of the analysis if based on pIDalyse. Run it by
 ```
+mkdir Analysis/
 cd Analysis/
 ../../pidalyse --r3223 ../References/5VM_3223.fasta --r3236 ../References/5VM_3236.fasta ../Alignments/32???/32???_nucMask_2.sam
 cd ..
