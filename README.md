@@ -145,13 +145,13 @@ cd ..
 ```
 
 ## pIDalyse
-After succesfully building the executables, run pIDalyse on the data by performing
+The core of the analysis if based on pIDalyse. Run it by
 ```
 cd Analysis/
 ../../pidalyse --r3223 ../References/5VM_3223.fasta --r3236 ../References/5VM_3236.fasta ../Alignments/32???/32???_nucMask_2.sam
 cd ..
 ```
-This will produce a plethora of information and statistics, like the estimators and mutant frequencies.
+This will produce a plethora of information and statistics, like the clone frequencies and enzymatic error rates.
 
 ## Reproducing statistics
 ### Figures
