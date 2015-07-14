@@ -178,8 +178,11 @@ This will produce a plethora of information and statistics, like the clone frequ
   ```
 
 - Figure 5 & 6 (**requires output of pIDalyse**):
+  Fitting the PCR bottleneck model requires a precomputed grid of parameter values in order to perform ordinary least squares fitting. While generating these precomputed values is possible, it requires enormous efforts that can only be replicated on a high performance computing cluster. We recommend using our precomputed values
   ```
   cd Figure\ 5\,6\ -\ pID\ bias/
+  wget https://n.ethz.ch/~dseifert/download/RT-PCR_Simulation.zip
+  unzip RT-PCR_Simulation.zip
   R CMD BATCH Figure5_6.R
   cd ..
   ```
