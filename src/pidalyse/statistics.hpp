@@ -33,6 +33,7 @@ public:
     DNAvector(int L_)
         : std::valarray<T>(static_cast<T>(0), static_cast<int>(std::pow(4, L_))), m_L(L_) {}
 
+    using std::valarray<T>::operator=;
     using std::valarray<T>::operator[];
     using std::valarray<T>::operator+=;
     using std::valarray<T>::operator/=;
@@ -61,31 +62,20 @@ public:
     seq_statistics(int L_);
 
     void reset();
-    void show_statistics() const;
     void addLengthToHistogram(int lengthpID);
+    void addAbundanceToHistogram(int replicates);
     void addPrimer(const std::string& strPrimer, int replicates);
-    void addPrimer_collisionFree(const std::string& strPrimer, int replicates);
     void mergestatistics(const seq_statistics& statisticsB);
     void write_to_csv(const std::string& file_stem) const;
     void write_histograms(const std::string& file_stem) const;
-    void calculate_comprehensive_statistics(const std::string& strLabel) const;
 
 private:
     size_t m_L;
-    int m_unique_counts;
+    int m_uniq_counts;
     int m_repl_counts;
 
-    std::vector<DNAvector<int>> m_marginal_counts; // position-wise counts of bases in pID
-    std::vector<DNAvector<int>> m_marginal_counts_repl; // position-wise counts of bases in pID times PCR multiplicity
-
-    std::vector<DNAvector<int>> m_pairwise_counts; // position-wise counts of bases in pID
-    std::vector<DNAvector<int>> m_pairwise_counts_repl; // position-wise counts of bases in pID times PCR multiplicity
-
-    DNAvector<int> m_whole_pID_counts; // pID counts
-    DNAvector<int> m_whole_pID_counts_repl; // pID counts times PCR multiplicity
-
-    DNAvector<int> m_collision_free_whole_pID_counts; // pID counts without collisions
-    DNAvector<int> m_collision_free_whole_pID_counts_repl; // pID counts without collisions times PCR multiplicity
+    DNAvector<int> m_whole_pID_counts_uniq; // pID counts, including PCR multiplicity
+    DNAvector<int> m_whole_pID_counts_repl; // pID counts, including PCR multiplicity
 
     std::valarray<int> m_histogram_of_abundance; // histogram of abundances
     int m_max_abundance;

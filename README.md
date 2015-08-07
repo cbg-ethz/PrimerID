@@ -51,7 +51,7 @@ A number of external programs are also required:
 
 4.  **AmpliconClipper**; latest release (http://github.com/SoapZA/AmpliconClipper)
 
-    AmpliconClipper trims an alignment to a specific region, clipping reads in the process. It can remove the primer and ID regions out of an alignment.
+    AmpliconClipper trims an alignment to a specific region, clipping reads in the process. It can remove the primer and ID regions from an alignment.
 
 5.  **Picard tools**; 1.130 release (http://broadinstitute.github.io/picard/)
 
@@ -59,7 +59,7 @@ A number of external programs are also required:
 
 6.  **bwa**; 0.7.12-r1044 release (http://bio-bwa.sourceforge.net)
 
-    To emulate a standard viral haplotype reconstruction pipeline, we employ bwa as standard and well-accepted aligner.
+    To emulate a standard viral haplotype reconstruction pipeline, we employ bwa as a standard and well-accepted aligner.
 
 7.  **samtools**; 1.2 release (http://github.com/samtools/samtools/releases)
 
@@ -72,14 +72,11 @@ A number of external programs are also required:
 9.  **R**; latest release (http://www.r-project.org)
 
     R is used to produce most plots. In addition, you will require the following R packages:
-    - plotrix
-    - RColorBrewer
-    - lattice
-    - grid
-    - gridExtra
-    - VennDiagram
-    - sfsmisc (optional, used for proper scientific formatting of axes)
-    - tikzDevice (optional, used instead of PDF output)
+    - _plotrix_
+    - _RColorBrewer_
+    - _sfsmisc_ (strongly prefer the latest version from http://github.com/mmaechler/sfsmisc)
+    - _tikzDevice_ (optional, used instead of PDF output)
+    - _VennDiagram_
 
 10. **MATLAB**; R2014b release (http://www.mathworks.com/products/matlab)
 
@@ -94,14 +91,12 @@ scripts/
 ├── Alignments
 ├── Analysis
 ├── Comparing estimators
-│   └── DetermineFreqs
 ├── Figure 2 - qPCR Efficiency
 ├── Figure 3,S9 - Histograms
-├── Figure 4 - Motifs
-│   └── seqLogo
+├── Figure 4,S16 - Nucleotide distributions
 ├── Figure 5,6 - pID bias
 ├── Figure S15 - HMM LogLik
-├── Figure S18,S19 - Bias and Variance
+├── Figure S19,S20 - Bias and Variance
 ├── PreprocessedData
 ├── RawData
 └── References
@@ -116,7 +111,7 @@ cd PrimerID/
 ./configure SEQAN_INCLUDEDIR=<PATH TO SEQAN> CXX=clang++
 make -j2
 ```
-We have used Clang as CXX compiler here; GCC should also work.
+We have used Clang as CXX compiler here; GCC should work equally well.
 
 ## Retrieving the data
 Download the data by performing
@@ -145,14 +140,14 @@ cd ..
 ```
 
 ## pIDalyse
-The core of the analysis if based on pIDalyse. Run it by
+The core of the analysis is based on pIDalyse. Run it by
 ```
 mkdir Analysis/
 cd Analysis/
-../../pidalyse --r3223 ../References/5VM_3223.fasta --r3236 ../References/5VM_3236.fasta ../Alignments/32???/32???_nucMask_2.sam
+../../pidalyse --r3223 ../References/5VM_3223_N_withPrimer.fasta --r3236 ../References/5VM_3236_N_withPrimer.fasta ../Alignments/32???/32???_nucMask_2.sam > OUTPUT.txt
 cd ..
 ```
-This will produce a plethora of information and statistics, like the clone frequencies and enzymatic error rates.
+This will produce a plethora of information and statistics in **OUTPUT.txt**, like the clone frequencies and mutant frequency estimates.
 
 ## Reproducing statistics
 ### Figures
@@ -170,14 +165,14 @@ This will produce a plethora of information and statistics, like the clone frequ
   cd ..
   ```
 
-- Figure 4 (**requires output of pIDalyse**):
+- Figure 4 & S16 (**requires output of pIDalyse**, will require up to **1 h**):
   ```
-  cd Figure\ 4\ -\ Motifs/
-  R CMD BATCH Figure4.R
+  cd Figure\ 4\,S16\ -\ Nucleotide\ distributions/
+  R CMD BATCH Figure4_S16.R
   cd ..
   ```
 
-- Figure 5 & 6 (**requires output of pIDalyse**):
+- Figure 5 & 6 (**requires output of pIDalyse**, will require up to **30 min**):
   Fitting the PCR bottleneck model requires a precomputed grid of parameter values in order to perform ordinary least squares fitting. While generating these precomputed values is possible, it requires enormous efforts that can only be replicated on a high performance computing cluster. We recommend using our precomputed values
   ```
   cd Figure\ 5\,6\ -\ pID\ bias/
@@ -202,7 +197,7 @@ This will produce a plethora of information and statistics, like the clone frequ
   cd ..
   ```
 
-- Figure S18 & S19 (**requires output of pIDalyse**):
+- Figure S19 & S20 (**requires output of pIDalyse**):
   1. open MATLAB
   2. open the file `pIDalyse_DATA.m` (the frequencies should be identical to the frequencies from pIDalyse)
   3. evaluate all three matrices (i.e., load them into memory)

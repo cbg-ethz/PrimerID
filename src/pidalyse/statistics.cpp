@@ -7,7 +7,7 @@
 
 #include "statistics.hpp"
 
-#ifdef REVERSE_ENDIAN
+#ifndef REVERSE_ENDIAN
 #define _ORDER L - 1 -
 #else
 #define _ORDER
@@ -58,37 +58,22 @@ int DNA_to_number(const std::string& DNA)
 
 /* SEQ_STATISTICS */
 seq_statistics::seq_statistics(int L_)
-    : m_L(L_), m_unique_counts(0), m_repl_counts(0), m_marginal_counts(L_, DNAvector<int>(1)), m_marginal_counts_repl(L_, DNAvector<int>(1)), m_pairwise_counts(L_ - 1, DNAvector<int>(2)), m_pairwise_counts_repl(L_ - 1, DNAvector<int>(2)), m_whole_pID_counts(L_), m_whole_pID_counts_repl(L_), m_collision_free_whole_pID_counts(L_), m_collision_free_whole_pID_counts_repl(L_), m_histogram_of_abundance(0, 10000), m_max_abundance(0), m_histogram_of_pID_length(0, m_max_len_pID + 1)
+    : m_L(L_), m_uniq_counts(0), m_repl_counts(0), m_whole_pID_counts_uniq(L_), m_whole_pID_counts_repl(L_), m_histogram_of_abundance(0, 10000), m_max_abundance(0), m_histogram_of_pID_length(0, m_max_len_pID + 1)
 {
 }
 
 void seq_statistics::reset()
 {
-    m_marginal_counts.assign(m_L, DNAvector<int>(1));
-    m_marginal_counts_repl.assign(m_L, DNAvector<int>(1));
+    m_uniq_counts = 0;
+    m_repl_counts = 0;
 
-    m_pairwise_counts.assign(m_L - 1, DNAvector<int>(2));
-    m_pairwise_counts_repl.assign(m_L - 1, DNAvector<int>(2));
-
-    m_whole_pID_counts = DNAvector<int>(1);
-    m_whole_pID_counts_repl = DNAvector<int>(1);
+    m_whole_pID_counts_uniq = 0;
+    m_whole_pID_counts_repl = 0;
 
     m_histogram_of_abundance = 0;
-}
+    m_max_abundance = 0;
 
-void seq_statistics::show_statistics() const
-{
-    const static std::array<char, 4> DNA{ { 'A', 'C', 'G', 'T' } };
-
-    for (size_t i = 0; i < 4; ++i) {
-        std::cout << std::fixed << std::setprecision(2) << DNA[i] << ": " << m_marginal_counts[0][i];
-
-        for (size_t j = 1; j < m_L; ++j) {
-            std::cout << '\t' << m_marginal_counts[j][i];
-        }
-
-        std::cout << '\n';
-    }
+    m_histogram_of_pID_length = 0;
 }
 
 void seq_statistics::addLengthToHistogram(int lengthpID)
@@ -97,123 +82,61 @@ void seq_statistics::addLengthToHistogram(int lengthpID)
         ++m_histogram_of_pID_length[lengthpID];
 }
 
-void seq_statistics::addPrimer(const std::string& strPrimer, int replicates)
+void seq_statistics::addAbundanceToHistogram(int replicates)
 {
-    // 1.) add to main effects
-    for (size_t i = 0; i < m_L; ++i) {
-        ++m_marginal_counts[i][strPrimer.substr(i, 1)];
-        m_marginal_counts_repl[i][strPrimer.substr(i, 1)] += replicates;
-    }
-
-    // 2.) add to pairwise effects
-    for (size_t i = 0; i < m_L - 1; ++i) {
-        ++m_pairwise_counts[i][strPrimer.substr(i, 2)];
-        m_pairwise_counts_repl[i][strPrimer.substr(i, 2)] += replicates;
-    }
-
-    // 3.) add to total RT count
-    ++m_whole_pID_counts[strPrimer];
-    m_whole_pID_counts_repl[strPrimer] += replicates;
-
-    // 4.) keep track of sum
-    ++m_unique_counts;
-    m_repl_counts += replicates;
-
-    // 5.) add to histogram
     ++m_histogram_of_abundance[replicates];
     m_max_abundance = std::max(m_max_abundance, replicates);
 }
 
-void seq_statistics::addPrimer_collisionFree(const std::string& strPrimer, int replicates)
+void seq_statistics::addPrimer(const std::string& strPrimer, int replicates)
 {
     // 1.) add to total RT count
-    ++m_collision_free_whole_pID_counts[strPrimer];
-    m_collision_free_whole_pID_counts_repl[strPrimer] += replicates;
+    ++m_whole_pID_counts_uniq[strPrimer];
+    m_whole_pID_counts_repl[strPrimer] += replicates;
+
+    // 2.) keep track of sum
+    ++m_uniq_counts;
+    m_repl_counts += replicates;
 }
 
 void seq_statistics::mergestatistics(const seq_statistics& statisticsB)
 {
-    // 1.) sum up main effects
-    for (size_t i = 0; i < m_L; ++i) {
-        m_marginal_counts[i] += statisticsB.m_marginal_counts[i];
-        m_marginal_counts_repl[i] += statisticsB.m_marginal_counts_repl[i];
-    }
+    // 1.) total counts
+    m_uniq_counts += statisticsB.m_uniq_counts;
+    m_repl_counts += statisticsB.m_repl_counts;
 
-    // 2.) sum up pairwise effects
-    for (size_t i = 0; i < m_L - 1; ++i) {
-        m_pairwise_counts[i] += statisticsB.m_pairwise_counts[i];
-        m_pairwise_counts_repl[i] += statisticsB.m_pairwise_counts_repl[i];
-    }
-
-    // 3.) sum up total RT count
-    m_whole_pID_counts += statisticsB.m_whole_pID_counts;
+    // 2.) sum up total RT count
+    m_whole_pID_counts_uniq += statisticsB.m_whole_pID_counts_uniq;
     m_whole_pID_counts_repl += statisticsB.m_whole_pID_counts_repl;
 
-    m_collision_free_whole_pID_counts += statisticsB.m_collision_free_whole_pID_counts;
-    m_collision_free_whole_pID_counts_repl += statisticsB.m_collision_free_whole_pID_counts_repl;
-
-    // 4.) histograms
+    // 3.) histograms
     m_histogram_of_abundance += statisticsB.m_histogram_of_abundance;
     m_max_abundance = std::max(m_max_abundance, statisticsB.m_max_abundance);
 
     m_histogram_of_pID_length += statisticsB.m_histogram_of_pID_length;
-
-    // 5.) total counts
-    m_unique_counts += statisticsB.m_unique_counts;
-    m_repl_counts += statisticsB.m_repl_counts;
 }
 
 void seq_statistics::write_to_csv(const std::string& file_stem) const
 {
-    //const static std::array<char, 4> DNA{{'A','C','G','T'}};
+    std::string DNAid;
+    std::ofstream output((file_stem + "_pID_counts.csv").c_str());
 
-    std::ofstream output((file_stem + "_unique.csv").c_str());
-    std::ofstream output_repl((file_stem + "_replicates.csv").c_str());
+    output << "Primer,unique,replicates\n";
+    for (size_t i = 0; i < m_whole_pID_counts_uniq.size(); ++i) {
+        if (m_whole_pID_counts_uniq[i]) {
+            DNAid = number_To_DNA(i, m_L);
 
-    for (size_t i = 0; i < 4; ++i) {
-        output << std::fixed << std::setprecision(5) << m_marginal_counts[0][i] / static_cast<double>(m_unique_counts);
-        output_repl << std::fixed << std::setprecision(5) << m_marginal_counts_repl[0][i] / static_cast<double>(m_repl_counts);
+            // check for indexing scheme
+            if (m_whole_pID_counts_repl[DNAid] != m_whole_pID_counts_repl[i]) {
+                std::cerr << "Failure!\n";
+                exit(EXIT_FAILURE);
+            }
 
-        for (size_t j = 1; j < m_L; ++j) {
-            output << ',' << m_marginal_counts[j][i] / static_cast<double>(m_unique_counts);
-            output_repl << ',' << m_marginal_counts_repl[j][i] / static_cast<double>(m_repl_counts);
+            output << DNAid << ',' << m_whole_pID_counts_uniq[i] << ',' << m_whole_pID_counts_repl[i] << '\n';
         }
-
-        output << '\n';
-        output_repl << '\n';
     }
 
     output.close();
-    output_repl.close();
-
-    // write list of primers and their PCR abundances
-    std::ofstream output_primers((file_stem + "_primers.csv").c_str());
-    std::ofstream output_primers_collision_free((file_stem + "_primers_collision_free.csv").c_str());
-    std::string tmp;
-
-    output_primers << "Primer,Count\n";
-    output_primers_collision_free << "Primer,Count\n";
-    for (size_t i = 0; i < m_whole_pID_counts_repl.size(); ++i) {
-        if (m_whole_pID_counts_repl[i]) {
-            tmp = number_To_DNA(i, m_L);
-            if (m_whole_pID_counts_repl[tmp] != m_whole_pID_counts_repl[i]) {
-                std::cerr << "Failure!\n";
-                exit(EXIT_FAILURE);
-            }
-            output_primers << tmp << ',' << m_whole_pID_counts_repl[i] << '\n';
-        }
-
-        if (m_collision_free_whole_pID_counts_repl[i]) {
-            tmp = number_To_DNA(i, m_L);
-            if (m_collision_free_whole_pID_counts_repl[tmp] != m_collision_free_whole_pID_counts_repl[i]) {
-                std::cerr << "Failure!\n";
-                exit(EXIT_FAILURE);
-            }
-            output_primers_collision_free << tmp << ',' << m_collision_free_whole_pID_counts_repl[i] << '\n';
-        }
-    }
-    output_primers.close();
-    output_primers_collision_free.close();
 }
 
 void seq_statistics::write_histograms(const std::string& file_stem) const
@@ -231,116 +154,6 @@ void seq_statistics::write_histograms(const std::string& file_stem) const
     for (int i = 1; i <= m_max_abundance; ++i)
         output_abundance << i << ',' << m_histogram_of_abundance[i] << '\n';
     output_abundance.close();
-}
-
-void seq_statistics::calculate_comprehensive_statistics(const std::string& strLabel) const
-{
-    const static std::array<std::string, 4> DNA{ { "A", "C", "G", "T" } };
-    const static std::array<std::string, 3> trun_DNA{ { "C", "G", "T" } };
-
-    std::vector<DNAvector<double>> _marginal_probabilities(m_L, DNAvector<double>(1));
-
-    std::vector<DNAvector<double>> _pairwise_probabilities(m_L - 1, DNAvector<double>(2));
-
-    // 1.) calculate (MLE) probabilities
-    for (size_t i = 0; i < m_L; ++i) {
-        // marginals
-        for (size_t j = 0; j < m_marginal_counts[i].size(); ++j) {
-            _marginal_probabilities[i][j] = m_marginal_counts[i][j] / static_cast<double>(m_unique_counts);
-        }
-
-        // pairwise
-        if (i != m_L - 1) {
-            for (size_t j = 0; j < m_pairwise_counts[i].size(); ++j) {
-                _pairwise_probabilities[i][j] = m_pairwise_counts[i][j] / static_cast<double>(m_unique_counts);
-            }
-        }
-    }
-
-    // 2.) print results
-    if (!strLabel.empty()) {
-        std::cout << strLabel << ":";
-    }
-
-    // numbering
-    for (size_t i = 0; i < m_L; ++i)
-        std::cout << "\t\t" << i + 1 << "\t";
-    std::cout << '\n';
-
-    for (size_t i = 0; i < m_L; ++i)
-        std::cout << "\tp=\tbeta=\t";
-    std::cout << '\n';
-
-    double beta;
-    /* marginals */
-    for (const auto& j : DNA) {
-        std::cout << j << ":";
-        for (size_t i = 0; i < m_L; ++i) {
-            beta = std::log(_marginal_probabilities[i][j] / _marginal_probabilities[i]["A"]);
-
-            std::cout << "\t" << std::fixed << std::setprecision(4) << _marginal_probabilities[i][j] << "\t" << (beta < 0 ? "" : " ") << beta << "\t";
-        }
-        std::cout << '\n';
-    }
-
-    std::vector<DNAvector<double>> beta_1(m_L - 1, DNAvector<double>(1));
-    std::vector<DNAvector<double>> beta_2(m_L - 1, DNAvector<double>(1));
-
-    // main effects
-    // 1st locus
-    for (const auto& j : trun_DNA) {
-        std::cout << "b_1(" << j << "):\t";
-
-        for (size_t i = 0; i < m_L - 1; ++i) {
-            beta = std::log(_pairwise_probabilities[i][j + "A"] / _pairwise_probabilities[i]["AA"]);
-            beta_1[i][j] = beta;
-            std::cout << "\t\t" << (beta < 0 ? "" : " ") << beta << "\t";
-        }
-
-        std::cout << '\n';
-    }
-
-    // 2nd locus
-    for (const auto& j : trun_DNA) {
-        std::cout << "b_2(" << j << "):\t";
-
-        for (size_t i = 0; i < m_L - 1; ++i) {
-            beta = std::log(_pairwise_probabilities[i]["A" + j] / _pairwise_probabilities[i]["AA"]);
-            beta_2[i][j] = beta;
-            std::cout << "\t\t" << (beta < 0 ? "" : " ") << beta << "\t";
-        }
-
-        std::cout << '\n';
-    }
-
-    // interaction effects
-    for (const auto& j2 : trun_DNA) {
-        for (const auto& j1 : trun_DNA) {
-            std::cout << "b_12(" << j1 << j2 << "):";
-
-            for (size_t i = 0; i < m_L - 1; ++i) {
-                beta = std::log(_pairwise_probabilities[i][j1 + j2] / _pairwise_probabilities[i]["AA"]) - beta_1[i][j1] - beta_2[i][j2];
-                std::cout << "\t\t" << (beta < 0 ? "" : " ") << beta << "\t";
-            }
-
-            std::cout << '\n';
-        }
-    }
-
-    // perform independence test
-    std::vector<double> LRs(9, 0);
-    std::cout << "G:\t";
-    for (size_t i = 0; i < m_L - 1; ++i) {
-        for (const auto& j2 : DNA) {
-            for (const auto& j1 : DNA) {
-                LRs[i] += m_pairwise_counts[i][j1 + j2] * std::log(_pairwise_probabilities[i][j1 + j2] / (_marginal_probabilities[i][j1] * _marginal_probabilities[i + 1][j2]));
-            }
-        }
-
-        LRs[i] *= 2;
-        std::cout << "\t" << LRs[i] << " (p=" << 1 - gsl_cdf_chisq_P(LRs[i], 9) << ")";
-    }
-    std::cout << "\n\n";
 }
 
 /* PROB_CYCLE */

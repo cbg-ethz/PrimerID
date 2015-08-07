@@ -3,7 +3,41 @@
 clean_files() {
 	echo "Cleaning bootstrapped files"
 
-	# ./
+	# executables
+	rm -rf pidalign
+	rm -rf pidalyse
+	rm -rf pidrtpcrsim
+	rm -rf test-dnavector
+	rm -rf test-prob-cycle
+
+	# build associated dependencies
+	rm -rf src/pidalign/.deps/
+	rm -rf src/pidalign/.dirstamp
+	rm -rf src/pidalign/pidalign-pidalign.o
+	
+	rm -rf src/pidalyse/.deps/
+	rm -rf src/pidalyse/.dirstamp
+	rm -rf src/pidalyse/pidalyse-alignment.o
+	rm -rf src/pidalyse/pidalyse-main.o
+	rm -rf src/pidalyse/pidalyse-proper_read.o
+	rm -rf src/pidalyse/pidalyse-reference.o
+	rm -rf src/pidalyse/pidalyse-statistics.o
+	
+	rm -rf src/pidrtpcrsim/.deps/
+	rm -rf src/pidrtpcrsim/.dirstamp
+	rm -rf src/pidrtpcrsim/pidrtpcrsim-pidrtpcrsim.o
+	
+	rm -rf src/pidalyse/test_dnavector-proper_read.o
+	rm -rf src/pidalyse/test_dnavector-statistics.o
+	rm -rf src/pidalyse/test_prob_cycle-proper_read.o
+	rm -rf src/pidalyse/test_prob_cycle-statistics.o
+	
+	rm -rf test/.deps/
+	rm -rf test/.dirstamp
+	rm -rf test/test_dnavector-test_dnavector.o
+	rm -rf test/test_prob_cycle-test_prob_cycle.o
+	
+	# autotools cruft
 	rm -rf Makefile
 	rm -rf Makefile.in
 	rm -rf aclocal.m4
@@ -21,42 +55,13 @@ clean_files() {
 	rm -rf install-sh
 	rm -rf missing
 	rm -rf stamp-h1
-
-	# ./src/pidalign
-	rm -rf pidalign
-	rm -rf src/pidalign/.deps/
-	rm -rf src/pidalign/.dirstamp
-	rm -rf src/pidalign/*.o
-
-	# ./src/pidalyse
-	rm -rf pidalyse
-	rm -rf src/pidalyse/.deps/
-	rm -rf src/pidalyse/.dirstamp
-	rm -rf src/pidalyse/*.o
 	
-	# ./src/pidrtpcrsim
-	rm -rf pidrtpcrsim
-	rm -rf src/pidrtpcrsim/.deps/
-	rm -rf src/pidrtpcrsim/.dirstamp
-	rm -rf src/pidrtpcrsim/*.o
+	# OS X cruft
+	find . -name '.DS_Store' -type f -delete
 	
-	# ./test
-	rm -rf test-dnavector
-	rm -rf test-prob-cycle
-	rm -rf test/.deps/
-	rm -rf test/.dirstamp
-	rm -rf test/*.o
-
-	# Tarballs
-	rm -rf pidalyse-0.1.tar.bz2
-	rm -rf pidalyse-0.1/
-
-	# OS X files
-	rm -rf .DS_Store
-	rm -rf src/.DS_Store
-	rm -rf src/pidalign/.DS_Store
-	rm -rf src/pidalyse/.DS_Store
-	rm -rf src/pidrtpcrsim/.DS_Store
+	# R cruft
+	find . -name '.RData' -type f -delete
+	find . -name '.Rapp.history' -type f -delete
 }
 
 if [[ "$1" == "--clean" ]]

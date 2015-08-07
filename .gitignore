@@ -1,28 +1,45 @@
+# raw sequencing data
+*.fastq
+
+# preprocessed sequencing data
+scripts/PreprocessedData/3223a/
+scripts/PreprocessedData/3223b/
+scripts/PreprocessedData/3223c/
+scripts/PreprocessedData/3236a/
+scripts/PreprocessedData/3236b/
+scripts/PreprocessedData/3236c/
+
+# alignments
+*.sam
+scripts/Alignments/3223a/
+scripts/Alignments/3223b/
+scripts/Alignments/3223c/
+scripts/Alignments/3236a/
+scripts/Alignments/3236b/
+scripts/Alignments/3236c/
+
+# HaploClique associated files
+scripts/Comparing estimators/3223a/
+scripts/Comparing estimators/3223b/
+scripts/Comparing estimators/3223c/
+scripts/Comparing estimators/3236a/
+scripts/Comparing estimators/3236b/
+scripts/Comparing estimators/3236c/
+scripts/Comparing estimators/DetermineFreqs/determineHCfreq
+scripts/Comparing estimators/submit.sh
+
+# RT-PCR Simulations
+scripts/Figure 5,6 - pID bias/Simulations/
+scripts/Figure 5,6 - pID bias/RT-PCR_Simulation.zip
+
 # Compiled Object files
-*.slo
-*.lo
 *.o
-*.obj
 
-# Precompiled Headers
-*.gch
-*.pch
+# R output files
+*.Rout
 
-# Compiled Dynamic libraries
-*.so
-*.dylib
-*.dll
+# OS X cruft
+.DS_Store
 
-# Fortran module files
-*.mod
-
-# Compiled Static libraries
-*.lai
-*.la
-*.a
-*.lib
-
-# Executables
-*.exe
-*.out
-*.app
+# Misc stuff
+scripts/Figure S15 - HMM LogLik/TaylorExpansion.mw

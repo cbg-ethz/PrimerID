@@ -123,7 +123,7 @@ void alignment::filtering_QA()
 
     // 2. collect statistics
     for (const auto& i : m_raw_pID_collection) {
-        m_pid_stats.addPrimer(i.first, i.second.size());
+        m_pid_stats.addAbundanceToHistogram(i.second.size());
         accepted += i.second.size();
     }
 
@@ -165,7 +165,7 @@ void alignment::remove_pID_collisions(int min_required_coverage, double min_plur
             ++m_number_singletons;
 
             m_reference.assign_counts(consensus, true);
-            m_pid_stats.addPrimer_collisionFree(i.first, tmp.size());
+            m_pid_stats.addPrimer(i.first, tmp.size());
 
             m_collision_free_pID_collection.emplace_back(i.first, std::move(tmp));
             m_consensus_pID_collection.emplace_back(std::piecewise_construct,
