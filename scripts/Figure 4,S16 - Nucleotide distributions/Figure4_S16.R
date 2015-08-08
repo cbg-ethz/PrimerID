@@ -134,8 +134,9 @@ scale <- 1
 x <- rep(c(1, 1 + offset), times = 9) + rep((0:8) * scale, each = 2)
 
 
-## 3.) actual plot A.) mononucleotide block
-CEX.withinbars <- 0.35
+## 3.) actual plot
+# A.) mononucleotide block
+CEX.withinbars <- 0.55
 CEX.axis <- 0.9
 SCALE.withinbars <- 1
 SCALE.axis <- 1
@@ -174,7 +175,7 @@ for (i in c(files, "Total")) {
             low <- high
             high <- high + freq_single_uniq[[i]][k, j]
             y_target <- (low + high)/2
-            text(X[j], y_target, paste(formatC(freq_single_uniq[[i]][k, j] * 100, format = "f", 1), "%", sep = ""), cex = CEX.withinbars * SCALE.withinbars)
+            text(X[j], y_target, paste(formatC(freq_single_uniq[[i]][k, j] * 100, format = "f", 1), sep = ""), cex = CEX.withinbars * SCALE.withinbars)
         }
     }
     
@@ -201,7 +202,7 @@ for (i in c(files, "Total")) {
             low <- high
             high <- high + freq_single_repl[[i]][k, j]
             y_target <- (low + high)/2
-            text(X[j], y_target, paste(formatC(freq_single_repl[[i]][k, j] * 100, format = "f", 1), "%", sep = ""), cex = CEX.withinbars * SCALE.withinbars)
+            text(X[j], y_target, paste(formatC(freq_single_repl[[i]][k, j] * 100, format = "f", 1), sep = ""), cex = CEX.withinbars * SCALE.withinbars)
         }
     }
 }
@@ -210,7 +211,7 @@ segments(grconvertX(0.5, from = "nic"), grconvertY(0.48, from = "nic"), grconver
 dev.off()
 
 # B.) dinucleotide plot
-CEX.perc <- 0.45
+CEX.perc <- 0.66
 
 tikz("FigureS16.tex", standAlone = FALSE, height = 4, width = 6.5)
 par(oma = c(0, 0, 0, 0), mar = c(5.5, 3, 0.4, 3.8), xpd = TRUE, las = 1)
@@ -235,8 +236,9 @@ for (i in 1:(2 * 9)) {
         low <- high
         high <- high + freq_pairwise[j, i]
         
-        y_target <- (low + high)/2
+        y_target <- 0.48*low + 0.52*high
         
-        text(X[i], y_target, paste("$", formatC(freq_pairwise[j, i] * 100, format = "f", 1), "\\%$", sep = ""), cex = CEX.perc)
+        text(X[i], y_target, paste("$", formatC(freq_pairwise[j, i] * 100, format = "f", 1), "$", sep = ""), cex = CEX.perc)
     }
 }
+dev.off()
