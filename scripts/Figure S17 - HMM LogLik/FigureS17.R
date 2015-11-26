@@ -3,11 +3,12 @@ require("sfsmisc")
 
 source("../Analysis/LogLikData.R")
 
-tikz("FigureS15.tex", standAlone = FALSE, height = 3, width = 6.5)
-par(mar = c(2.5, 6.3, 0.7, 0))
+tikz("FigureS17.tex", standAlone = FALSE, height = 3, width = 6.5)
+par(mar = c(2.5, 5.4, 0.7, 0.2))
+par(mgp = c(3, 0.65, 0))
 par(xpd = TRUE)
 
-plot(x, y, type = "n", log = "x", main = "", axes = FALSE, xlab = "", ylab = "", xlim = c(2e-06, max(x)))
+plot(x, y, type = "n", log = "x", main = "", axes = FALSE, xlab = "", ylab = "", xlim = c(1E-6, 8E-6))
 lines(x, y, type = "l")
 
 # x-axis
@@ -16,7 +17,7 @@ mtext("$r$", side = 1, line = 1.5, cex = 1.5)
 
 # y-axis
 eaxis(2, lab.type = "latex")
-mtext("Log-Likelihood $\\mathcal{L}$", side = 2, line = 5, cex = 1.5)
+mtext("Log-Likelihood $\\mathcal{L}$", side = 2, line = 4.25, cex = 1.5)
 
 YMIN <- par("usr")[3]
 YMAX <- par("usr")[4]
@@ -30,7 +31,7 @@ lnMIDP <- mean(c(lnX_CI_LOW, lnX_CI_HIGH))
 MIDP <- exp(lnMIDP)
 
 XSPAN <- lnX_CI_HIGH - lnX_CI_LOW
-ratio <- 0.28
+ratio <- 0.30
 x_left <- exp(lnX_CI_LOW + ratio * XSPAN)
 x_right <- exp(lnX_CI_LOW + (1 - ratio) * XSPAN)
 
@@ -48,4 +49,5 @@ text(r, YMIN + 0.95 * (YMAX - YMIN), paste("$\\hat{r} = $", pretty10exp(r, lab.t
 arrows(X_CI_LOW, YMIN + 0.95 * (LOGLIKMAX_CI - YMIN), x_left, YMIN + 0.95 * (LOGLIKMAX_CI - YMIN), code = 1, length = 0.07)
 arrows(x_right, YMIN + 0.95 * (LOGLIKMAX_CI - YMIN), X_CI_HIGH, YMIN + 0.95 * (LOGLIKMAX_CI - YMIN), code = 2, length = 0.07)
 
-text(x = MIDP, y = YMIN + 0.95 * (LOGLIKMAX_CI - YMIN), labels = "95\\% CI") 
+text(x = MIDP, y = YMIN + 0.95 * (LOGLIKMAX_CI - YMIN), labels = "95\\% CI")
+dev.off()

@@ -141,7 +141,7 @@ CEX.axis <- 0.9
 SCALE.withinbars <- 1
 SCALE.axis <- 1
 
-pdf(file = "Figure4.pdf", width = 10, height = 6.5)
+pdf(file = "Figure3.pdf", width = 10, height = 6.5)
 par(oma = c(2.5, 2.5, 1.2, 1.5), mar = c(1, 0.25, 1, 0.25), mgp = c(3, 0.5, 0), xpd = NA, las = 1, lty = 0, lwd = 0.1)
 layout(matrix(c(1, 3, 5, 7, 9, 11, 2, 4, 6, 8, 10, 12, 16, 13, 13, 14, 14, 15, 17, 13, 13, 14, 14, 15), nrow = 4, byrow = TRUE))
 
@@ -213,7 +213,7 @@ dev.off()
 # B.) dinucleotide plot
 CEX.perc <- 0.66
 
-tikz("FigureS16.tex", standAlone = FALSE, height = 4, width = 6.5)
+tikz("FigureS18.tex", standAlone = FALSE, height = 4, width = 6.5)
 par(oma = c(0, 0, 0, 0), mar = c(5.5, 3, 0.4, 3.8), xpd = TRUE, las = 1)
 X <- barplot(freq_pairwise, space = c(1, 0.15), axes = FALSE, col = dinuc_cols)
 legend(x = X[16] + 4.5, y = 1, legend = rev(dinucs), fill = rev(dinuc_cols))

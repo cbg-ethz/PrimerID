@@ -21,7 +21,7 @@ record::record(const std::string& DNA_, const std::string& name_)
 
 // reference
 reference::reference(const std::string& fileName_, referenceType variant_)
-    : m_referenceFile(fileName_), m_reference_variant(variant_), m_raw_total(0), m_pID_total(0), m_freq_initialised(false), attempted_consensus_assignments(0), m_num_heterozygous_loci(0), m_num_homozygous_loci(0)
+    : m_referenceFile(fileName_), m_reference_variant(variant_), m_raw_total(0), m_pID_total(0), m_freq_initialised(false), attempted_consensus_assignments(0), m_num_heterozygous_loci(0), m_num_homozygous_loci(0), m_replace_start(495), m_pID_length(10), m_overhang_min_length(23)
 {
     m_fileName = boost::filesystem::path(m_referenceFile).filename().string();
     m_fileStem = boost::filesystem::path(m_referenceFile).stem().string();
@@ -59,17 +59,13 @@ reference::reference(const std::string& fileName_, referenceType variant_)
 
     // 2.) initialise property variable
     // this depends on the locus under consideration
-    m_replace_start = 495;
     if (m_reference_variant == referenceType::START_3223)
         m_replace_length = 14;
     else
         m_replace_length = 27;
 
-    m_pID_length = 10;
     m_pID_start = m_replace_start + m_replace_length;
-
     m_overhang_start = m_pID_start + m_pID_length;
-    m_overhang_min_length = 23;
 
     // 3.) set loci to include
     // hard-coded at the moment, will be replaced at a later stage
@@ -134,11 +130,76 @@ void set_reference_intersection(reference& A, reference& B)
     std::set_intersection(A.m_homozygous_loci.begin(), A.m_homozygous_loci.end(), B.m_homozygous_loci.begin(), B.m_homozygous_loci.end(), back_inserter(reference::m_shared_homozygous_loci));
 }
 
+hamming_return_type reference::min_hamming_hetero_distance(const std::string& s) const
+{
+    if (s.length() < m_replace_start)
+        throw std::range_error("String length does not match amplicon length!\n");
+
+    int best_mismatches = 10000;
+    int best_valid_trials;
+    int best_Ns;
+
+    int temp_mismatches;
+    int temp_valid_trials;
+    int temp_Ns;
+
+    for (const auto& i : m_all_reference_strains) {
+        temp_mismatches = 0;
+        temp_valid_trials = 0;
+        temp_Ns = 0;
+
+        for (int j : m_heterozygous_loci) {
+            if (non_ambiguous_base(s[j])) {
+                ++temp_valid_trials;
+                temp_mismatches += (s[j] != i.m_DNA[j]);
+            }
+            else {
+                ++temp_Ns;
+            }
+        }
+
+        if (temp_mismatches < best_mismatches) {
+            best_mismatches = temp_mismatches;
+            best_valid_trials = temp_valid_trials;
+            best_Ns = temp_Ns;
+        }
+    }
+
+    return hamming_return_type(best_mismatches, best_valid_trials, best_Ns);
+}
+
+void reference::display_hamming_distance() const
+{
+    std::cout << std::string(50, '=') << '\n';
+    std::cout << "Hamming distances between strains" << '\n';
+    std::cout << "-------------------------------------\n";
+
+    std::cout << "Reference: " << m_fileName << '\n';
+    std::cout << '\n' << '\t';
+
+    // print row names
+    for (int i = 0; i < m_K - 1; ++i) {
+        std::cout << m_all_reference_strains[i].m_name << ' ';
+    }
+    std::cout << '\n';
+
+    for (int i = 1; i < m_K; ++i) {
+        std::cout << m_all_reference_strains[i].m_name << '\t';
+
+        for (int j = 0; j < i; ++j) {
+            std::cout << std::get<0>(hamming_distance(m_all_reference_strains[i].m_DNA, m_all_reference_strains[j].m_DNA, m_included_loci)) << ' ';
+        }
+        std::cout << '\n';
+    }
+
+    std::cout << std::string(50, '=') << '\n';
+}
+
 void reference::display_strains_hetero() const
 {
     std::cout << std::string(50, '=') << '\n';
     std::cout << "Reference strains" << '\n';
-    std::cout << "-----------------------\n";
+    std::cout << "-------------------------------------\n";
 
     std::cout << "Reference: " << m_fileName << '\n';
     std::cout << '\n';
@@ -169,7 +230,7 @@ void reference::display_strains_verbose() const
 
     std::cout << std::string(50, '=') << '\n';
     std::cout << "Reference strains (verbose)" << '\n';
-    std::cout << "-----------------------\n";
+    std::cout << "-------------------------------------\n";
 
     std::cout << "Reference: " << m_fileName << '\n';
     std::cout << '\n';
@@ -267,7 +328,7 @@ void reference::assign_counts(const std::string& read, bool consensus)
         if (hamming < min_dist) {
             min_dist = hamming;
 
-            if (min_dist < 2) {
+            if (min_dist < 1) {
                 index = i;
             }
         }

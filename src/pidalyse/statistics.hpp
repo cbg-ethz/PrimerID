@@ -64,7 +64,9 @@ public:
     void reset();
     void addLengthToHistogram(int lengthpID);
     void addAbundanceToHistogram(int replicates);
+    void addMinHeteroHammingToHistogram(int distance);
     void addPrimer(const std::string& strPrimer, int replicates);
+
     void mergestatistics(const seq_statistics& statisticsB);
     void write_to_csv(const std::string& file_stem) const;
     void write_histograms(const std::string& file_stem) const;
@@ -77,11 +79,15 @@ private:
     DNAvector<int> m_whole_pID_counts_uniq; // pID counts, including PCR multiplicity
     DNAvector<int> m_whole_pID_counts_repl; // pID counts, including PCR multiplicity
 
+    int m_observed_max_abundance;
     std::valarray<int> m_histogram_of_abundance; // histogram of abundances
-    int m_max_abundance;
+    const static int m_max_abundance = 10000;
 
     std::valarray<int> m_histogram_of_pID_length; // histogram of pID lengths
     const static int m_max_len_pID = 20;
+
+    std::valarray<int> m_histogram_of_min_hamming_hetero_distance; // histogram of minimum heterozygous Hamming distances
+    const static int m_max_min_hamming_hetero_distance = 25;
 };
 
 class prob_cycle {

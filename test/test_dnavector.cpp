@@ -4,7 +4,7 @@
 
 int main()
 {
-    const int L = 2;
+    const int L = 3;
     DNAvector<int> LOLvector(L);
 
     std::string DNA1;
@@ -13,7 +13,7 @@ int main()
     int number2;
     int TEMP;
 
-    for (int i = 0; i < 4 * 4; ++i) {
+    for (int i = 0; i < 4*4*4; ++i) {
         TEMP = 2 * i;
         LOLvector[i] = TEMP;
 

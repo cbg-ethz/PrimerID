@@ -102,12 +102,21 @@ void alignment::filtering_QA()
     std::string curString;
     int accepted = 0;
     m_raw_pID_collection.clear();
-    m_raw_pID_collection.reserve(600000);
+    m_raw_pID_collection.reserve(700000);
+
+    uint64_t temp_mismatches;
+    uint64_t temp_valid_trials;
+    uint64_t temp_Ns;
 
     // 1. add to vector
     for (const auto& i : m_raw_reads) {
         m_reference.assign_counts(i.m_DNA, false);
         m_pid_stats.addLengthToHistogram(i.m_len_pID);
+
+        std::tie(temp_mismatches, temp_valid_trials, temp_Ns) = m_reference.min_hamming_hetero_distance(i.m_DNA);
+        if (temp_valid_trials >= 23) {
+            m_pid_stats.addMinHeteroHammingToHistogram(temp_mismatches);
+        }
 
         if (i.m_is_valid) {
             // can add read
@@ -127,18 +136,25 @@ void alignment::filtering_QA()
         accepted += i.second.size();
     }
 
-    std::cout << m_fileName << ": " << accepted << " passed QA (" << std::fixed << std::setprecision(1) << static_cast<double>(accepted) / m_raw_reads.size() * 100 << "%)\n";
+    std::cout << m_fileName << ": " << accepted << " passed (" << m_raw_reads.size() - accepted << " failed) QA (" << std::fixed << std::setprecision(1) << static_cast<double>(accepted) / m_raw_reads.size() * 100 << "%)\n";
 }
 
-void alignment::remove_pID_collisions(int min_required_coverage, double min_plurality, bool report)
+void alignment::remove_pID_collisions(int min_required_coverage, double min_plurality, bool removeCollisions)
 {
     m_min_current_coverage = min_required_coverage;
     m_min_majority_fraction = min_plurality;
 
     std::string consensus;
-    m_number_collisions = 0;
-    m_number_indecisive = 0;
-    m_number_singletons = 0;
+    // pID statistics
+    m_cons_number_collisions = 0;
+    m_cons_number_indecisive = 0;
+    m_cons_number_singletons = 0;
+
+    // raw read statistics
+    int m_raw_number_collisions = 0;
+    int m_raw_number_indecisive = 0;
+    int m_raw_number_contaminant = 0;
+    int m_raw_number_good = 0;
 
     m_collision_free_pID_collection.clear();
     m_consensus_pID_collection.clear();
@@ -147,42 +163,98 @@ void alignment::remove_pID_collisions(int min_required_coverage, double min_plur
 
     for (auto& i : m_raw_pID_collection) {
         tmp.clear();
-        consensus = call_consensus_and_remove_collisions(i.second, 50, tmp);
+        consensus = call_consensus_and_remove_collisions(i.second, 50, tmp, removeCollisions);
 
         switch (consensus[0]) {
         case '0':
             // collision
-            ++m_number_collisions;
+            ++m_cons_number_collisions;
+            m_raw_number_collisions += i.second.size();
             break;
 
         case '1':
             // indecisive
-            ++m_number_indecisive;
+            ++m_cons_number_indecisive;
+            m_raw_number_indecisive += i.second.size();
             break;
 
         default:
             // OK, proper consensus
-            ++m_number_singletons;
+            ++m_cons_number_singletons;
+            m_raw_number_good += tmp.size();
+            m_raw_number_contaminant += (i.second.size() - tmp.size());
 
             m_reference.assign_counts(consensus, true);
             m_pid_stats.addPrimer(i.first, tmp.size());
 
-            m_collision_free_pID_collection.emplace_back(i.first, std::move(tmp));
             m_consensus_pID_collection.emplace_back(std::piecewise_construct,
                 std::forward_as_tuple(i.first),
                 std::forward_as_tuple(std::move(consensus), m_reference, tmp.size()));
+            m_collision_free_pID_collection.emplace_back(i.first, std::move(tmp));
             break;
         }
     }
 
     m_reference.normalise_counts();
 
-    if (report) {
-        std::cout << "Collision-free pIDs: " << m_number_singletons << '\n';
-        std::cout << "    Indecisive pIDs: " << m_number_indecisive << '\n';
-        std::cout << "     Collision pIDs: " << m_number_collisions << " (" << std::fixed << std::setprecision(1) << static_cast<double>(m_number_collisions) / (m_number_singletons + m_number_collisions) * 100 << "%)\n";
-        std::cout << "         Total pIDs: " << m_raw_pID_collection.size() << '\n';
+    std::cout << m_fileName << ":\n";
+    std::cout << "  Collision raw reads: " << m_raw_number_collisions << '\n';
+    std::cout << " Indecisive raw reads: " << m_raw_number_indecisive << '\n';
+    std::cout << "Contaminant raw reads: " << m_raw_number_contaminant << '\n';
+    std::cout << "  Remaining raw reads: " << m_raw_number_good << '\n';
+
+    std::cout << "       Collision pIDs: " << m_cons_number_collisions << " (" << std::fixed << std::setprecision(1) << static_cast<double>(m_cons_number_collisions) / (m_cons_number_singletons + m_cons_number_collisions) * 100 << "%)\n";
+    std::cout << "      Indecisive pIDs: " << m_cons_number_indecisive << '\n';
+    std::cout << "       Remaining pIDs: " << m_cons_number_singletons << '\n';
+    std::cout << "           Total pIDs: " << m_raw_pID_collection.size() << "\n\n";
+}
+
+// PCR STUFF:
+d_hamming_return_type alignment::calculate_PCR_mismatches() const
+{
+    double mismatches = 0;
+    uint64_t valid_trials = 0;
+    uint64_t Ns = 0;
+
+    int cov;
+    ranked_DNA_list ranks;
+
+    char wt, mt;
+    int num_wt, num_mt;
+
+    double p;
+
+    for (const auto& i : m_collision_free_pID_collection) {
+        cov = i.second.size();
+
+        for (int j : m_reference.m_homozygous_loci) {
+            // 1.) perform pileup
+            ranks.reset();
+
+            for (const auto& k : i.second) {
+                ranks.add_base(k->m_fullRead[j]);
+            }
+
+            // 2.) perform ranking
+            std::tie<char, int>(wt, num_wt) = ranks.get_rank_base(0);
+            std::tie<char, int>(mt, num_mt) = ranks.get_rank_base(1);
+
+            if (ranks.get_ambig_count() >= 2) {
+                ++Ns;
+                continue;
+            }
+
+            ++valid_trials;
+
+            if (ranks.get_total_mt_count() <= 2)
+                continue;
+
+            p = PCR_prob(num_mt, num_mt + num_wt, 2);
+            mismatches += p;
+        }
     }
+
+    return d_hamming_return_type(mismatches, valid_trials, Ns);
 }
 
 // RT STUFF:
@@ -223,6 +295,7 @@ hamming_return_type alignment::calculate_RT_mismatches() const
     return hamming_return_type(mismatches, valid_trials, Ns);
 }
 
+// RT-PCR STUFF:
 double alignment::LogLik(double s, double r) const
 {
     double total_likelihood = 0;
@@ -250,55 +323,6 @@ double alignment::LogLik(double s, double r) const
     }
 
     return total_likelihood;
-}
-
-// PCR STUFF:
-d_hamming_return_type alignment::calculate_PCR_mismatches() const
-{
-    double mismatches = 0;
-    uint64_t valid_trials = 0;
-    uint64_t Ns = 0;
-
-    int cov;
-    ranked_DNA_list ranks;
-
-    char wt, mt;
-    int num_wt, num_mt;
-
-    double p;
-
-    for (const auto& i : m_collision_free_pID_collection) {
-        cov = i.second.size();
-        // PCRerror = false;
-
-        for (int j : m_reference.m_homozygous_loci) {
-            // 1.) perform pileup
-            ranks.reset();
-
-            for (const auto& k : i.second) {
-                ranks.add_base(k->m_fullRead[j]);
-            }
-
-            // 2.) perform ranking
-            std::tie<char, int>(wt, num_wt) = ranks.get_rank_base(0);
-            std::tie<char, int>(mt, num_mt) = ranks.get_rank_base(1);
-
-            if (ranks.get_ambig_count() >= 2) {
-                ++Ns;
-                continue;
-            }
-
-            ++valid_trials;
-
-            if (ranks.get_total_mt_count() <= 2)
-                continue;
-
-            p = PCR_prob(num_mt, num_mt + num_wt, 2);
-            mismatches += p;
-        }
-    }
-
-    return d_hamming_return_type(mismatches, valid_trials, Ns);
 }
 
 // STATISTICS STUFF:
@@ -421,7 +445,7 @@ void alignment::write_statistics_to_csv() const
 }
 
 // PRIVATE FUNCTIONS:
-std::string alignment::call_consensus_and_remove_collisions(std::vector<proper_read>& reads, int minDisplay, std::vector<proper_read*>& filtered_reads)
+std::string alignment::call_consensus_and_remove_collisions(std::vector<proper_read>& reads, int minDisplay, std::vector<proper_read*>& filtered_reads, bool removeCollisions)
 {
     static kmeans clustering;
     std::string full_consensus;
@@ -431,20 +455,32 @@ std::string alignment::call_consensus_and_remove_collisions(std::vector<proper_r
         full_consensus = "1";
     }
     else {
-        double majority_fraction;
-        int majority_size;
-        std::tie(majority_fraction, majority_size, filtered_reads, full_consensus) = clustering(reads, m_min_majority_fraction);
+        if (removeCollisions) {
+            // try to remove collisions
+            double majority_fraction;
+            int majority_size;
+            std::tie(majority_fraction, majority_size, filtered_reads, full_consensus) = clustering(reads, m_min_majority_fraction);
 
-        if (majority_fraction < m_min_majority_fraction) {
-            // collision
-            full_consensus = "0";
+            if (majority_fraction < m_min_majority_fraction) {
+                // collision
+                full_consensus = "0";
+            }
+            else {
+                // no collision
+                if (majority_size < m_min_current_coverage) {
+                    // indecisive - coverage too low
+                    full_consensus = "1";
+                }
+            }
         }
         else {
-            // no collision
-            if (majority_size < m_min_current_coverage) {
-                // indecisive - coverage too low
-                full_consensus = "1";
+            // don't remove collisions, leave them
+            filtered_reads.clear();
+            for (auto& i : reads) {
+                filtered_reads.push_back(&i);
             }
+
+            full_consensus = call_full_consensus(filtered_reads, m_min_majority_fraction);
         }
     }
 
@@ -553,20 +589,60 @@ void alignments::filtering_QA()
     m_is_collisions_removed = false;
 }
 
-void alignments::remove_pID_collisions(int min_required_coverage, double min_plurality, bool report)
+void alignments::remove_pID_collisions(int min_required_coverage, double min_plurality, bool removeCollisions)
 {
     m_min_current_coverage = min_required_coverage;
     m_min_majority_fraction = min_plurality;
 
     for (alignment& i : m_collections_alignments) {
-        i.remove_pID_collisions(m_min_current_coverage, m_min_majority_fraction, report);
+        i.remove_pID_collisions(m_min_current_coverage, m_min_majority_fraction, removeCollisions);
     }
 
     m_is_collisions_removed = true;
 }
 
+// PCR STUFF:
+double alignments::estimate_PCR_substitution_rate()
+{
+    double mismatches = 0;
+    uint64_t valid_trials = 0;
+    uint64_t Ns = 0;
+    d_hamming_return_type temp;
+
+    for (const alignment& i : m_collections_alignments) {
+        temp = i.calculate_PCR_mismatches();
+
+        mismatches += std::get<0>(temp);
+        valid_trials += std::get<1>(temp);
+        Ns += std::get<2>(temp);
+    }
+
+    m_PCR_sub_rate = mismatches / valid_trials;
+    m_PCR_sub_rate_CI_lower = boost::math::binomial_distribution<>::find_lower_bound_on_p(valid_trials, mismatches, 0.025);
+    m_PCR_sub_rate_CI_upper = boost::math::binomial_distribution<>::find_upper_bound_on_p(valid_trials, mismatches, 0.025);
+
+    /* OUTPUT */
+    std::cout << std::string(50, '=') << '\n';
+    std::cout << "PCR substitution rate" << '\n';
+    std::cout << "-------------------------------------\n";
+    std::cout << '\n';
+
+    std::cout << "           mt bases: " << std::defaultfloat << static_cast<uint64_t>(mismatches) << '\n';
+    std::cout << "        Total bases: " << valid_trials << '\n';
+    std::cout << "          'N' bases: " << Ns << '\n';
+    std::cout << '\n';
+
+    std::cout << "  Est. PCR sub rate: " << std::scientific << std::setprecision(2) << m_PCR_sub_rate << '\n';
+    std::cout << "             95% CI: [" << m_PCR_sub_rate_CI_lower << ", " << m_PCR_sub_rate_CI_upper << "]\n";
+
+    std::cout << std::string(50, '=') << '\n';
+    /* OUTPUT */
+
+    return m_PCR_sub_rate;
+}
+
 // RT STUFF:
-double alignments::estimate_RT_substitution_rate(bool report)
+double alignments::estimate_RT_substitution_rate()
 {
     uint64_t MLE_mismatches = 0;
     uint64_t MLE_valid_trials = 0;
@@ -592,7 +668,7 @@ double alignments::estimate_RT_substitution_rate(bool report)
     uint64_t Ns;
 
     double temp_rate;
-    std::vector<double> vector_mt_freqs, log_vector_mt_freqs;
+    std::vector<double> vector_mt_freqs;
 
     std::cout << std::scientific << std::setprecision(3);
 
@@ -611,7 +687,6 @@ double alignments::estimate_RT_substitution_rate(bool report)
 
         temp_rate = static_cast<double>(mismatches) / valid_trials;
         vector_mt_freqs.push_back(temp_rate);
-        log_vector_mt_freqs.push_back(log(temp_rate));
     }
 
     double sample_size = vector_mt_freqs.size();
@@ -624,38 +699,32 @@ double alignments::estimate_RT_substitution_rate(bool report)
     double RT_sub_rate_MoM_CI_lower = MoM_mu - gsl_cdf_tdist_Pinv(1 - 0.05 / 2, sample_size - 1) * MoM_sigma / sqrt(sample_size);
     double RT_sub_rate_MoM_CI_upper = MoM_mu + gsl_cdf_tdist_Pinv(1 - 0.05 / 2, sample_size - 1) * MoM_sigma / sqrt(sample_size);
 
-    // geometric mean:
-    double log_MoM_mu = gsl_stats_mean(log_vector_mt_freqs.data(), 1, sample_size);
-    double log_MoM_sigma = gsl_stats_variance_m(log_vector_mt_freqs.data(), 1, sample_size, log_MoM_mu);
+    /* OUTPUT */
+    std::cout << std::string(50, '=') << '\n';
+    std::cout << "RT substitution rate" << '\n';
+    std::cout << "-------------------------------------\n";
+    std::cout << '\n';
 
-    double RT_sub_rate_log_MoM = exp(log_MoM_mu);
-    double RT_sub_rate_log_MoM_CI_lower = exp(log_MoM_mu - gsl_cdf_tdist_Pinv(1 - 0.05 / 2, sample_size - 1) * log_MoM_sigma / sqrt(sample_size));
-    double RT_sub_rate_log_MoM_CI_upper = exp(log_MoM_mu + gsl_cdf_tdist_Pinv(1 - 0.05 / 2, sample_size - 1) * log_MoM_sigma / sqrt(sample_size));
+    std::cout << "   1.) MLE:\n";
+    std::cout << "           mt bases: " << std::defaultfloat << MLE_mismatches << '\n';
+    std::cout << "        Total bases: " << MLE_valid_trials << '\n';
+    std::cout << "          'N' bases: " << MLE_Ns << '\n';
+    std::cout << '\n';
+    std::cout << "   Est. RT sub rate: " << std::scientific << std::setprecision(2) << RT_sub_rate_MLE << '\n';
+    std::cout << "             95% CI: [" << RT_sub_rate_MLE_CI_lower << ", " << RT_sub_rate_MLE_CI_upper << "]\n\n";
 
-    // report
-    if (report) {
-        std::cout << std::string(50, '=') << '\n';
-        std::cout << "RT substitution rate" << '\n';
-        std::cout << "-----------------------\n";
-        std::cout << '\n';
+    std::cout << "   2.) MoM:\n";
+    std::cout << "   Est. RT sub rate: " << std::scientific << std::setprecision(2) << RT_sub_rate_MoM << '\n';
+    std::cout << "             95% CI: [" << RT_sub_rate_MoM_CI_lower << ", " << RT_sub_rate_MoM_CI_upper << "]\n\n";
 
-        std::cout << "   1.) MLE:\n";
-        std::cout << "           mt bases: " << MLE_mismatches << '\n';
-        std::cout << "        Total bases: " << MLE_valid_trials << '\n';
-        std::cout << "          'N' bases: " << MLE_Ns << '\n';
-        std::cout << '\n';
-        std::cout << "   Est. RT sub rate: " << std::scientific << std::setprecision(2) << RT_sub_rate_MLE << '\n';
-        std::cout << "             95% CI: [" << RT_sub_rate_MLE_CI_lower << ", " << RT_sub_rate_MLE_CI_upper << "]\n\n";
+    const double s_bias = 1.11E-4;
+    std::cout << "   After bias correction (MLE):\n";
+    std::cout << "             s_bias: " << std::scientific << std::setprecision(2) << s_bias << '\n';
+    std::cout << "   Est. RT sub rate: " << RT_sub_rate_MLE - s_bias << '\n';
+    std::cout << "             95% CI: [" << RT_sub_rate_MLE_CI_lower - s_bias << ", " << RT_sub_rate_MLE_CI_upper - s_bias << "]\n\n";
 
-        std::cout << "   2.) MoM:\n";
-        std::cout << "   Est. RT sub rate: " << std::scientific << std::setprecision(2) << RT_sub_rate_MoM << '\n';
-        std::cout << "             95% CI: [" << RT_sub_rate_MoM_CI_lower << ", " << RT_sub_rate_MoM_CI_upper << "]\n\n";
-        std::cout << "   using logarithmic transform:\n";
-        std::cout << "   Est. RT sub rate: " << std::scientific << std::setprecision(2) << RT_sub_rate_log_MoM << '\n';
-        std::cout << "             95% CI: [" << RT_sub_rate_log_MoM_CI_lower << ", " << RT_sub_rate_log_MoM_CI_upper << "]\n\n";
-
-        std::cout << std::string(50, '=') << '\n';
-    }
+    std::cout << std::string(50, '=') << '\n';
+    /* OUTPUT */
 
     m_RT_sub_rate = RT_sub_rate_MLE;
     m_RT_sub_rate_CI_lower = RT_sub_rate_MLE_CI_lower;
@@ -664,21 +733,22 @@ double alignments::estimate_RT_substitution_rate(bool report)
     return m_RT_sub_rate;
 }
 
-double alignments::estimate_RT_recombination_rate(bool report)
+// RT-PCR STUFF:
+double alignments::estimate_RTPCR_recombination_rate()
 {
-    return estimate_RT_recombination_rate(m_RT_sub_rate, report);
+    return estimate_RTPCR_recombination_rate(m_RT_sub_rate);
 }
 
-double alignments::estimate_RT_recombination_rate(double s, bool report)
+double alignments::estimate_RTPCR_recombination_rate(double s)
 {
     std::pair<double, double> result;
 
     // 1.) calculate MLE
-    result = boost::math::tools::brent_find_minima([&](double r) -> double {return this->neg_LogLik_recombination(s, r);
+    result = boost::math::tools::brent_find_minima([&](double r) -> double {return -this->calculate_RTPCR_LogLik_recombination(s, r);
     }, 1E-10, 0.9, 1000);
 
-    m_RT_recomb_rate = result.first;
-    m_RT_LogLik = -result.second;
+    m_RTPCR_recomb_rate = result.first;
+    m_RTPCR_LogLik = -result.second;
 
     // 2.) calculate 95% CI
     uintmax_t max_iter = 1000;
@@ -686,48 +756,50 @@ double alignments::estimate_RT_recombination_rate(double s, bool report)
 
     // lower CI boundary
     max_iter = 1000;
-    result = boost::math::tools::toms748_solve([&](double r) -> double {return this->calculate_RT_LogLik_recombination(s, r) - m_RT_LogLik + 1.920729;
-    }, m_RT_recomb_rate / 50, m_RT_recomb_rate, tol, max_iter);
+    result = boost::math::tools::toms748_solve([&](double r) -> double {return this->calculate_RTPCR_LogLik_recombination(s, r) - m_RTPCR_LogLik + 1.920729;
+    }, m_RTPCR_recomb_rate / 50, m_RTPCR_recomb_rate, tol, max_iter);
 
-    m_RT_recomb_rate_CI_lower = (result.first + result.second) / 2;
+    m_RTPCR_recomb_rate_CI_lower = (result.first + result.second) / 2;
 
     // upper CI boundary
     max_iter = 1000;
-    result = boost::math::tools::toms748_solve([&](double r) -> double {return this->calculate_RT_LogLik_recombination(s, r) - m_RT_LogLik + 1.920729;
-    }, m_RT_recomb_rate, m_RT_recomb_rate * 50, tol, max_iter);
+    result = boost::math::tools::toms748_solve([&](double r) -> double {return this->calculate_RTPCR_LogLik_recombination(s, r) - m_RTPCR_LogLik + 1.920729;
+    }, m_RTPCR_recomb_rate, m_RTPCR_recomb_rate * 50, tol, max_iter);
 
-    m_RT_recomb_rate_CI_upper = (result.first + result.second) / 2;
+    m_RTPCR_recomb_rate_CI_upper = (result.first + result.second) / 2;
 
-    if (report) {
-        // 3.) display
-        std::cout << std::string(50, '=') << '\n';
-        std::cout << "RT recombination rate" << '\n';
-        std::cout << "-----------------------\n";
-        std::cout << '\n';
+    /* OUTPUT */
+    std::cout << std::string(50, '=') << '\n';
+    std::cout << "RT-PCR recombination rate" << '\n';
+    std::cout << "-------------------------------------\n";
+    std::cout << '\n';
 
-        std::cout << "Est. RT recomb rate: " << std::scientific << std::setprecision(2) << m_RT_recomb_rate << '\n';
-        std::cout << "     Log-Likelihood: " << std::fixed << std::setprecision(2) << m_RT_LogLik << '\n';
-        std::cout << "             95% CI: [" << std::scientific << std::setprecision(2) << m_RT_recomb_rate_CI_lower << ", " << m_RT_recomb_rate_CI_upper << "]\n";
+    std::cout << "Est. RT-PCR recomb rate: " << std::scientific << std::setprecision(2) << m_RTPCR_recomb_rate << '\n';
+    std::cout << "         Log-Likelihood: " << std::fixed << std::setprecision(2) << m_RTPCR_LogLik << '\n';
+    std::cout << "                 95% CI: [" << std::scientific << std::setprecision(2) << m_RTPCR_recomb_rate_CI_lower << ", " << m_RTPCR_recomb_rate_CI_upper << "]\n";
 
-        std::cout << std::string(50, '=') << '\n';
-    }
+    std::cout << std::string(50, '=') << '\n';
+    /* OUTPUT */
 
-    return m_RT_recomb_rate;
+    return m_RTPCR_recomb_rate;
 }
 
-void alignments::plot_RT_recombination_LogLik(double upper, int n) const
+void alignments::plot_RTPCR_recombination_LogLik(const double target, int n) const
 {
-    std::pair<double, double> result;
-    double CI_LogLik = calculate_RT_LogLik_recombination(m_RT_sub_rate, upper);
-
     uintmax_t max_iter = 1000;
     boost::math::tools::eps_tolerance<double> tol(10000);
+    std::pair<double, double> result;
 
-    // upper plot boundary
-    result = boost::math::tools::toms748_solve([&](double r) -> double {return this->calculate_RT_LogLik_recombination(m_RT_sub_rate, r) - CI_LogLik;
-    }, m_RT_recomb_rate / 100, m_RT_recomb_rate, tol, max_iter);
+    double CI_LogLik = calculate_RTPCR_LogLik_recombination(m_RT_sub_rate, target);
+    const bool lower_bound_given = (target < m_RTPCR_recomb_rate);
 
-    double lower = (result.first + result.second) / 2;
+    // lower plot boundary
+    result = boost::math::tools::toms748_solve([&](double r) -> double {return this->calculate_RTPCR_LogLik_recombination(m_RT_sub_rate, r) - CI_LogLik;
+    }, (lower_bound_given ? m_RTPCR_recomb_rate : m_RTPCR_recomb_rate / 1000), (lower_bound_given ? m_RTPCR_recomb_rate * 1000 : m_RTPCR_recomb_rate), tol, max_iter);
+
+    const double mean_result = (result.first + result.second) / 2;
+    const double lower = (lower_bound_given ? target : mean_result);
+    const double upper = (lower_bound_given ? mean_result : target);
 
     std::cout << "Drawing Plot from " << lower << " to " << upper << "\n";
     double factor = 1.0 / (n - 1) * (log(upper) - log(lower));
@@ -745,11 +817,11 @@ void alignments::plot_RT_recombination_LogLik(double upper, int n) const
     for (double i = lower; i <= upper; i *= factor, ++I) {
         x.emplace_back(i);
 
-        temp = calculate_RT_LogLik_recombination(m_RT_sub_rate, i);
+        temp = calculate_RTPCR_LogLik_recombination(m_RT_sub_rate, i);
         y.emplace_back(temp);
 
         if (I % 10 == 0)
-            std::cout << "Iteration " << std::fixed << std::setprecision(0) << I << "\tr: " << std::scientific << std::setprecision(4) << i << "\tLogLik: " << temp << '\n';
+            std::cout << "Iteration " << std::defaultfloat << I << "\tr: " << std::scientific << std::setprecision(4) << i << "\tLogLik: " << temp << '\n';
     }
 
     // write R file
@@ -767,52 +839,12 @@ void alignments::plot_RT_recombination_LogLik(double upper, int n) const
 
     R_Data << ")\n\n";
 
-    R_Data << "LOGLIKMAX = " << std::fixed << std::setprecision(4) << m_RT_LogLik << "\n";
-    R_Data << "X_CI_LOW = " << std::scientific << std::setprecision(4) << m_RT_recomb_rate_CI_lower << "\n";
-    R_Data << "X_CI_HIGH = " << std::scientific << std::setprecision(4) << m_RT_recomb_rate_CI_upper << "\n";
-    R_Data << "r = " << std::scientific << std::setprecision(2) << m_RT_recomb_rate << "\n";
+    R_Data << "LOGLIKMAX = " << std::fixed << std::setprecision(4) << m_RTPCR_LogLik << "\n";
+    R_Data << "X_CI_LOW = " << std::scientific << std::setprecision(4) << m_RTPCR_recomb_rate_CI_lower << "\n";
+    R_Data << "X_CI_HIGH = " << std::scientific << std::setprecision(4) << m_RTPCR_recomb_rate_CI_upper << "\n";
+    R_Data << "r = " << std::scientific << std::setprecision(2) << m_RTPCR_recomb_rate << "\n";
 
     R_Data.close();
-}
-
-// PCR STUFF:
-double alignments::estimate_PCR_substitution_rate(bool report)
-{
-    double mismatches = 0;
-    uint64_t valid_trials = 0;
-    uint64_t Ns = 0;
-    d_hamming_return_type temp;
-
-    for (const alignment& i : m_collections_alignments) {
-        temp = i.calculate_PCR_mismatches();
-
-        mismatches += std::get<0>(temp);
-        valid_trials += std::get<1>(temp);
-        Ns += std::get<2>(temp);
-    }
-
-    m_PCR_sub_rate = mismatches / valid_trials;
-    m_PCR_sub_rate_CI_lower = boost::math::binomial_distribution<>::find_lower_bound_on_p(valid_trials, mismatches, 0.025);
-    m_PCR_sub_rate_CI_upper = boost::math::binomial_distribution<>::find_upper_bound_on_p(valid_trials, mismatches, 0.025);
-
-    if (report) {
-        std::cout << std::string(50, '=') << '\n';
-        std::cout << "PCR substitution rate" << '\n';
-        std::cout << "-----------------------\n";
-        std::cout << '\n';
-
-        std::cout << "           mt bases: " << mismatches << '\n';
-        std::cout << "        Total bases: " << valid_trials << '\n';
-        std::cout << "          'N' bases: " << Ns << '\n';
-        std::cout << '\n';
-
-        std::cout << "  Est. PCR sub rate: " << std::scientific << std::setprecision(2) << m_PCR_sub_rate << '\n';
-        std::cout << "             95% CI: [" << m_PCR_sub_rate_CI_lower << ", " << m_PCR_sub_rate_CI_upper << "]\n";
-
-        std::cout << std::string(50, '=') << '\n';
-    }
-
-    return m_PCR_sub_rate;
 }
 
 // DISPLAY I/O:
@@ -887,7 +919,7 @@ void alignments::write_all_statistics()
 }
 
 // PRIVATE FUNCTIONS:
-double alignments::calculate_RT_LogLik_recombination(double s, double r) const
+double alignments::calculate_RTPCR_LogLik_recombination(double s, double r) const
 {
     double total_likelihood = 0;
 
@@ -895,9 +927,4 @@ double alignments::calculate_RT_LogLik_recombination(double s, double r) const
         total_likelihood += i.LogLik(s, r);
 
     return total_likelihood;
-}
-
-double alignments::neg_LogLik_recombination(double s, double r) const
-{
-    return -calculate_RT_LogLik_recombination(s, r);
 }

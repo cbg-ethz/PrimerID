@@ -64,7 +64,7 @@ for (i in 1:6) {
 }
 
 # 4) plot data
-pdf(file = "Figure6.pdf", width = 3 * 5, height = 2 * 5)
+pdf(file = "Figure5.pdf", width = 3 * 5, height = 2 * 5)
 par(mfrow = c(2, 3))
 par(oma = c(1, 1, 1, 1))
 par(mgp = c(2.6, 1, 0))
@@ -137,7 +137,7 @@ CEX.LAB5 <- 1.7
 CEX.CLASS <- 2
 
 BASE_UNIT <- 2
-pdf(file = "Figure5.pdf", width = 6 * BASE_UNIT, height = 7 * BASE_UNIT)
+pdf(file = "Figure4.pdf", width = 6 * BASE_UNIT, height = 7 * BASE_UNIT)
 grid.newpage()
 pushViewport(plotViewport(c(0, 1, 0, 0)))
 pushViewport(viewport(layout = grid.layout(7, 6)))

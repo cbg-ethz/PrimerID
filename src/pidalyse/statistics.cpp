@@ -58,7 +58,7 @@ int DNA_to_number(const std::string& DNA)
 
 /* SEQ_STATISTICS */
 seq_statistics::seq_statistics(int L_)
-    : m_L(L_), m_uniq_counts(0), m_repl_counts(0), m_whole_pID_counts_uniq(L_), m_whole_pID_counts_repl(L_), m_histogram_of_abundance(0, 10000), m_max_abundance(0), m_histogram_of_pID_length(0, m_max_len_pID + 1)
+    : m_L(L_), m_uniq_counts(0), m_repl_counts(0), m_whole_pID_counts_uniq(L_), m_whole_pID_counts_repl(L_), m_observed_max_abundance(0), m_histogram_of_abundance(0, m_max_abundance + 1), m_histogram_of_pID_length(0, m_max_len_pID + 1), m_histogram_of_min_hamming_hetero_distance(0, m_max_min_hamming_hetero_distance + 1)
 {
 }
 
@@ -71,7 +71,7 @@ void seq_statistics::reset()
     m_whole_pID_counts_repl = 0;
 
     m_histogram_of_abundance = 0;
-    m_max_abundance = 0;
+    m_observed_max_abundance = 0;
 
     m_histogram_of_pID_length = 0;
 }
@@ -84,8 +84,23 @@ void seq_statistics::addLengthToHistogram(int lengthpID)
 
 void seq_statistics::addAbundanceToHistogram(int replicates)
 {
-    ++m_histogram_of_abundance[replicates];
-    m_max_abundance = std::max(m_max_abundance, replicates);
+    if (replicates <= m_max_abundance) {
+        ++m_histogram_of_abundance[replicates];
+        m_observed_max_abundance = std::max(m_observed_max_abundance, replicates);
+    }
+    else {
+        throw std::range_error("PCR replicate number is too large for histogram!\n");
+    }
+}
+
+void seq_statistics::addMinHeteroHammingToHistogram(int distance)
+{
+    if (distance <= m_max_min_hamming_hetero_distance) {
+        ++m_histogram_of_min_hamming_hetero_distance[distance];
+    }
+    else {
+        throw std::range_error("Hamming distance is too large for histogram!\n");
+    }
 }
 
 void seq_statistics::addPrimer(const std::string& strPrimer, int replicates)
@@ -111,9 +126,11 @@ void seq_statistics::mergestatistics(const seq_statistics& statisticsB)
 
     // 3.) histograms
     m_histogram_of_abundance += statisticsB.m_histogram_of_abundance;
-    m_max_abundance = std::max(m_max_abundance, statisticsB.m_max_abundance);
+    m_observed_max_abundance = std::max(m_observed_max_abundance, statisticsB.m_observed_max_abundance);
 
     m_histogram_of_pID_length += statisticsB.m_histogram_of_pID_length;
+
+    m_histogram_of_min_hamming_hetero_distance += statisticsB.m_histogram_of_min_hamming_hetero_distance;
 }
 
 void seq_statistics::write_to_csv(const std::string& file_stem) const
@@ -151,9 +168,16 @@ void seq_statistics::write_histograms(const std::string& file_stem) const
     // abundance histogram
     std::ofstream output_abundance((file_stem + "_abundance_histograms.csv").c_str());
     output_abundance << "Abundance,Count\n";
-    for (int i = 1; i <= m_max_abundance; ++i)
+    for (int i = 1; i <= m_observed_max_abundance; ++i)
         output_abundance << i << ',' << m_histogram_of_abundance[i] << '\n';
     output_abundance.close();
+
+    // minimum heterozygous Hamming distance histogram
+    std::ofstream output_hetero_hamming((file_stem + "_min_hetero_hamming_histograms.csv").c_str());
+    output_hetero_hamming << "Hamming,Count\n";
+    for (int i = 0; i <= m_max_min_hamming_hetero_distance; ++i)
+        output_hetero_hamming << i << ',' << m_histogram_of_min_hamming_hetero_distance[i] << '\n';
+    output_hetero_hamming.close();
 }
 
 /* PROB_CYCLE */
@@ -350,6 +374,7 @@ std::string call_full_consensus(const std::vector<proper_read*>& reads, double m
 
     char wt;
     int num_wt;
+    const int cov = reads.size();
 
     for (int i = 0; i < reads[0]->m_ref.m_replace_start; ++i) {
         ranks.reset();
@@ -360,8 +385,9 @@ std::string call_full_consensus(const std::vector<proper_read*>& reads, double m
 
         std::tie<char, int>(wt, num_wt) = ranks.get_rank_base(0);
 
-        if (ranks.get_nonambig_frac() >= minMajorFraction)
+        if (num_wt >= minMajorFraction * cov) {
             new_consensus[i] = wt;
+        }
     }
 
     return new_consensus;

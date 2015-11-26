@@ -13,12 +13,13 @@ reference ref3236;
 
 int main(int argc, char* argv[])
 {
-
     std::string referenceFile_3223;
     std::string referenceFile_3236;
 
-    int minCoverage = 10;
-    double nonAmbigFrac = 0.8;
+    bool removeCollisions = true;
+
+    int minCoverage;
+    double nonAmbigFrac;
     std::vector<std::string> inputFiles;
 
     // program options
@@ -27,7 +28,7 @@ int main(int argc, char* argv[])
 
     // configuration options
     boost::program_options::options_description config("Configuration");
-    config.add_options()("r3223", boost::program_options::value<std::string>(&referenceFile_3223)->required(), "File containing the 3223 references (REQUIRED)")("r3236", boost::program_options::value<std::string>(&referenceFile_3236)->required(), "File containing the 3236 references (REQUIRED)")("minCov", boost::program_options::value<int>(&minCoverage)->default_value(10), "Minimum number of reads per pID")(",f", boost::program_options::value<double>(&nonAmbigFrac)->default_value(0.8, "0.8"), "Minimum fraction of non-ambiguous bases A,C,G,T to call majority base");
+    config.add_options()("r3223", boost::program_options::value<std::string>(&referenceFile_3223)->required(), "File containing the 3223 references (REQUIRED)")("r3236", boost::program_options::value<std::string>(&referenceFile_3236)->required(), "File containing the 3236 references (REQUIRED)")("leave-col", "Leave collisions (i.e., do not attempt to remove them)")("minCov", boost::program_options::value<int>(&minCoverage)->default_value(10), "Minimum number of reads per pID")(",f", boost::program_options::value<double>(&nonAmbigFrac)->default_value(0.8, "0.8"), "Minimum fraction of non-ambiguous bases A,C,G,T to call majority base");
 
     // hidden options, i.e., input files
     boost::program_options::options_description hidden("Hidden options");
@@ -65,7 +66,8 @@ int main(int argc, char* argv[])
         return EXIT_FAILURE;
     }
 
-    // 1.) parse input files
+    // 1.) parse command line options
+    removeCollisions = !(global_options.count("leave-col"));
     inputFiles = global_options["input-file"].as<std::vector<std::string>>();
 
     // 2.) show parameters
@@ -73,6 +75,7 @@ int main(int argc, char* argv[])
     std::cout << "            Min coverage for calling consensus: " << minCoverage << '\n';
     std::cout << "  Minimum plurality required for majority base: " << nonAmbigFrac << '\n';
     std::cout << "                         Number of input files: " << inputFiles.size() << '\n';
+    std::cout << (removeCollisions ? "Collisions should be removed" : "Collisions will not be removed") << "\n\n";
 
     // 3.) load reference
     std::cout << "1. Loading references\n";
@@ -82,6 +85,9 @@ int main(int argc, char* argv[])
 
     ref3223.display_strains_hetero();
     ref3236.display_strains_hetero();
+
+    ref3223.display_hamming_distance();
+    ref3236.display_hamming_distance();
 
     //ref3223.display_strains_verbose();
     //ref3236.display_strains_verbose();
@@ -96,15 +102,16 @@ int main(int argc, char* argv[])
 
     // 6.) Remove collisions
     std::cout << "4. Removing collisions\n";
-    DATA.remove_pID_collisions(minCoverage, nonAmbigFrac, true);
+    DATA.remove_pID_collisions(minCoverage, nonAmbigFrac, removeCollisions);
 
     // 7.) Calculate estimators
     std::cout << "5. Calculating estimators\n";
-    DATA.estimate_RT_substitution_rate(true);
-    DATA.estimate_RT_recombination_rate(true);
-    DATA.estimate_PCR_substitution_rate(true);
+    DATA.estimate_PCR_substitution_rate();
 
-    DATA.plot_RT_recombination_LogLik();
+    DATA.estimate_RT_substitution_rate();
+
+    DATA.estimate_RTPCR_recombination_rate();
+    DATA.plot_RTPCR_recombination_LogLik(1E-6);
 
     // 8.) Perform remaining statistics
     std::cout << "6. Writing statistics to file\n";

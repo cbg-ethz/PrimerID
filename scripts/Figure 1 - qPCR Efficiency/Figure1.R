@@ -20,7 +20,7 @@ SUBTYPE <- c("1", "2", "3", "4")
 PCHs <- c(21, 22, 23, 24) - 6
 CEX <- c(1, 1.1, 1, 1.3) * 1.2
 
-pdf(file = "Figure2.pdf", width = 8, height = 5)
+pdf(file = "Figure1.pdf", width = 8, height = 5)
 par(oma = c(0, 0, 0, 0))
 par(mar = c(4, 4, 0.5, 0.5))
 par(mgp = c(2.5, 1, 0))

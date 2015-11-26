@@ -74,11 +74,11 @@ A number of external programs are also required:
     R is used to produce most plots. In addition, you will require the following R packages:
     - _plotrix_
     - _RColorBrewer_
-    - _sfsmisc_ (strongly prefer the latest version from http://github.com/mmaechler/sfsmisc)
+    - _sfsmisc_ (use the latest 1.0-28 version for proper LaTeX output)
     - _tikzDevice_ (optional, used instead of PDF output)
     - _VennDiagram_
 
-10. **MATLAB**; R2014b release (http://www.mathworks.com/products/matlab)
+10. **MATLAB**; R2015a release (http://www.mathworks.com/products/matlab)
 
     MATLAB is used to perform the likelihood ratio tests for comparing biases and variances between estimators.
 
@@ -91,15 +91,16 @@ scripts/
 ├── Alignments
 ├── Analysis
 ├── Comparing estimators
-├── Figure 2 - qPCR Efficiency
-├── Figure 3,S9 - Histograms
-├── Figure 4,S16 - Nucleotide distributions
-├── Figure 5,6 - pID bias
-├── Figure S15 - HMM LogLik
-├── Figure S19,S20 - Bias and Variance
+├── Figure 1 - qPCR Efficiency
+├── Figure 2,S10 - Histograms
+├── Figure 3,S18 - Nucleotide distributions
+├── Figure 4,5 - pID bias
+├── Figure S17 - HMM LogLik
+├── Figure S21,S22 - Bias and Variance
 ├── PreprocessedData
 ├── RawData
-└── References
+├── References
+└── Table S7,S8 - Minimum heterozygous Hamming distances
 ```
 
 ## Preparing the programs
@@ -151,34 +152,34 @@ This will produce a plethora of information and statistics in **OUTPUT.txt**, li
 
 ## Reproducing statistics
 ### Figures
-- Figure 2:
+- Figure 1:
   ```
-  cd Figure\ 2\ -\ qPCR\ Efficiency/
-  R CMD BATCH Figure2.R
+  cd Figure\ 1\ -\ qPCR\ Efficiency
+  R CMD BATCH Figure1.R
   cd ..
   ```
 
-- Figure 3 & S9 (**requires output of pIDalyse**):
+- Figure 2 & S10 (**requires output of pIDalyse**):
   ```
-  cd Figure\ 3\,S9\ -\ Histograms/
-  R CMD BATCH Figure3_S9.R
+  cd Figure\ 2,S10\ -\ Histograms
+  R CMD BATCH Figure2_S10.R
   cd ..
   ```
 
-- Figure 4 & S16 (**requires output of pIDalyse**, will require up to **1 h**):
+- Figure 3 & S18 (**requires output of pIDalyse**, will require up to **1 h**):
   ```
-  cd Figure\ 4\,S16\ -\ Nucleotide\ distributions/
-  R CMD BATCH Figure4_S16.R
+  cd Figure\ 3,S18\ -\ Nucleotide\ distributions
+  R CMD BATCH Figure3_S18.R
   cd ..
   ```
 
-- Figure 5 & 6 (**requires output of pIDalyse**, will require up to **30 min**):
+- Figure 4 & 5 (**requires output of pIDalyse**, will require up to **30 min**):
   Fitting the PCR bottleneck model requires a precomputed grid of parameter values in order to perform ordinary least squares fitting. While generating these precomputed values is possible, it requires enormous efforts that can only be replicated on a high performance computing cluster. We recommend using our precomputed values
   ```
-  cd Figure\ 5\,6\ -\ pID\ bias/
+  cd Figure\ 4,5\ -\ pID\ bias
   wget https://n.ethz.ch/~dseifert/download/RT-PCR_Simulation.zip
   unzip RT-PCR_Simulation.zip
-  R CMD BATCH Figure5_6.R
+  R CMD BATCH Figure4_5.R
   cd ..
   ```
 
@@ -190,14 +191,14 @@ This will produce a plethora of information and statistics in **OUTPUT.txt**, li
   ```
   Take care to adjust the environmental flag _FASTQC_ in the bash script `analyse.sh` to match the location of your executables.
 
-- Figure S15 (**requires output of pIDalyse**):
+- Figure S17 (**requires output of pIDalyse**):
   ```
-  cd Figure\ S15\ -\ HMM\ LogLik/
-  R CMD BATCH FigureS15.R
+  cd Figure\ S17\ -\ HMM\ LogLik
+  R CMD BATCH FigureS17.R
   cd ..
   ```
 
-- Figure S19 & S20 (**requires output of pIDalyse**):
+- Figure S21 & S22 (**requires output of pIDalyse**):
   1. open MATLAB
   2. open the file `pIDalyse_DATA.m` (the frequencies should be identical to the frequencies from pIDalyse)
   3. evaluate all three matrices (i.e., load them into memory)
@@ -209,13 +210,10 @@ This will produce a plethora of information and statistics in **OUTPUT.txt**, li
   produced with **pIDalign** and **pIDalyse**
 
 - Table 2:
-  produced with **pIDalyse**
+  produced by **Figure4_5.R** and contained in `Figure4_5.Rout`
 
 - Table 3:
-  produced by **Figure5_6.R** and contained in `Figure5_6.Rout`
-
-- Table 4:
-  Raw and pID frequencies are produced by **pIDalyse**. HaploClique frequencies are produced by first running HaploCloque over the trimmed alignments and then calculating frequencies:
+  Raw and pID frequencies are produced by **pIDalyse**. HaploClique frequencies are produced by first running HaploClique over the trimmed alignments and then calculating frequencies:
   1. Run `prepare.sh` in **Comparing estimators** (Adjust the environmental variables _AMPLICONCLIPPER_, _PICARDTOOLS_ and _BWA_ to match the locations of your executables)
   2. Run `HC.sh` (this our local script, you will need to adjust this). HaploClique will likely require a larger server, as the algorithm is very computationally intensive.
   3. Compile the file `DetermineFreqs/determineHCfreq.cpp` using either GCC or Clang and give it the resulting `quasispecies.fasta` file to retrieve the frequencies of the 5 clones.

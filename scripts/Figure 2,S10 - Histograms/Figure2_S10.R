@@ -3,6 +3,7 @@ files <- c("3223a", "3223b", "3223c", "3236a", "3236b", "3236c")
 # 1) histogram data
 DATA_abundance <- list()
 DATA_pID_length <- list()
+
 y_max <- 0
 for (i in 1:6) {
     file <- files[i]
@@ -14,14 +15,13 @@ for (i in 1:6) {
 }
 
 # 2) plot abundance histograms
-pdf(file = "Figure3.pdf", width = 3 * 5, height = 2 * 5)
+pdf(file = "Figure2.pdf", width = 3 * 5, height = 2 * 5)
 par(mfrow = c(2, 3))
 par(oma = c(0, 0.2, 0, 0))
 par(mgp = c(2.7, 1, 0))
 
 for (i in 1:6) {
     file <- files[i]
-    message(file)
     
     plot(DATA_abundance[[i]]$Abundance, DATA_abundance[[i]]$Count, log = "y", xaxs = "i", type = "h", lwd = 5, lend = 1, col = "gray", xlab = "Abundance", ylab = "Count", main = file, cex.lab = 1.8, cex.axis = 1.3, cex.main = 2.5, xlim = c(-2, max(DATA_abundance[[i]]$Abundance) + 10), xaxt = "n")
     axis(1, at = c(1, seq(from = 50, to = max(DATA_abundance[[i]]$Abundance) + 10, by = 50)), cex.axis = 1.3)
@@ -30,6 +30,7 @@ for (i in 1:6) {
     Y_MAX <- 10^par("usr")[4]
     
     segments(10, Y_MIN, 10, Y_MAX/3, col = "red", lwd = 1.2, lty = 2, lend = 1)
+    message(file, " & $\\nprounddigits{0}\\npthousandsep{,}\\numprint{", DATA_abundance[[i]]$Count[1], "}$ & $\\nprounddigits{0}\\npthousandsep{,}\\numprint{", sum(DATA_abundance[[i]]$Count), "}$ & $", formatC(DATA_abundance[[i]]$Count[1] / sum(DATA_abundance[[i]]$Count)*100, format = "f", digits = 1), "$\\\\[\\myrowskip]")
 }
 dev.off()
 
@@ -38,8 +39,8 @@ require("RColorBrewer")
 require("sfsmisc")
 require("tikzDevice")
 
-# pdf(file='FigureS9.pdf', width=10, height=5)
-tikz(file = "FigureS9.tex", standAlone = FALSE, height = 3.5, width = 6.5)
+# pdf(file='FigureS10.pdf', width=10, height=5)
+tikz(file = "FigureS10.tex", standAlone = FALSE, height = 3.5, width = 6.5)
 colours <- brewer.pal(6, "Set1")
 colours[6] <- "gold"
 
@@ -59,4 +60,5 @@ for (i in 1:6) {
 
 legend("topright", files, col = colours, lwd = 3)
 eaxis(1, at = 0:20, f.smalltcl = 0, lab.type = "latex")
-eaxis(2, lab.type = "latex") 
+eaxis(2, lab.type = "latex")
+dev.off()

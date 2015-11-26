@@ -24,8 +24,8 @@ struct raw_paired_read {
 
     raw_paired_read(const raw_paired_read&) = default; // Copy constructor
     raw_paired_read(raw_paired_read&&) = default; // Move constructor
-    raw_paired_read& operator=(const raw_paired_read&)& = default; // Copy assignment operator
-    raw_paired_read& operator=(raw_paired_read&&)& = default; // Move assignment operator
+    raw_paired_read& operator=(const raw_paired_read&) = default; // Copy assignment operator
+    raw_paired_read& operator=(raw_paired_read&&) = default; // Move assignment operator
     ~raw_paired_read() = default;
 
     // practically used ctor:
@@ -47,15 +47,17 @@ public:
 
     // PREPROCESSING:
     void filtering_QA();
-    void remove_pID_collisions(int min_required_coverage, double min_plurality, bool report = false);
+    void remove_pID_collisions(int min_required_coverage, double min_plurality, bool removeCollisions);
+
+    // PCR STUFF:
+    d_hamming_return_type calculate_PCR_mismatches() const;
 
     // RT STUFF:
     hamming_return_type count_mismatches_at_locus(int locus) const;
     hamming_return_type calculate_RT_mismatches() const;
-    double LogLik(double s, double r) const;
 
-    // PCR STUFF:
-    d_hamming_return_type calculate_PCR_mismatches() const;
+    // RT-PCR STUFF:
+    double LogLik(double s, double r) const;
 
     // STATISTICS STUFF:
     void add_to_merge_statistics(seq_statistics&) const;
@@ -89,9 +91,9 @@ private:
     // STATISTICS:
     seq_statistics m_pid_stats;
 
-    int m_number_singletons;
-    int m_number_collisions;
-    int m_number_indecisive;
+    int m_cons_number_singletons;
+    int m_cons_number_collisions;
+    int m_cons_number_indecisive;
 
     int m_mismatches;
     int m_valid_trials;
@@ -102,7 +104,7 @@ private:
     double m_min_majority_fraction;
 
     // PRIVATE FUNCTIONS:
-    std::string call_consensus_and_remove_collisions(std::vector<proper_read>& reads, int minDisplay, std::vector<proper_read*>& filtered_reads);
+    std::string call_consensus_and_remove_collisions(std::vector<proper_read>& reads, int minDisplay, std::vector<proper_read*>& filtered_reads, bool removeCollisions);
     void construct_sequence(const std::string& SEQ, const std::string& CIGAR, const int POS, const reference& ref, std::string& final_raw_sequence, std::string& pID, int& num_inserts, int& num_dels, int& num_N, int& len_overhang) const;
 };
 
@@ -113,18 +115,19 @@ public:
 
     // PREPROCESSING:
     void filtering_QA();
-    void remove_pID_collisions(int min_required_coverage, double min_plurality, bool report = false);
-
-    // RT STUFF:
-    double estimate_RT_substitution_rate(bool report = false);
-
-    double estimate_RT_recombination_rate(bool report = false);
-    double estimate_RT_recombination_rate(double s, bool report = false);
-
-    void plot_RT_recombination_LogLik(double upper = 1E-5, int n = 100) const;
+    void remove_pID_collisions(int min_required_coverage, double min_plurality, bool removeCollisions);
 
     // PCR STUFF:
-    double estimate_PCR_substitution_rate(bool report = false);
+    double estimate_PCR_substitution_rate();
+
+    // RT STUFF:
+    double estimate_RT_substitution_rate();
+
+    // RT-PCR STUFF:
+    double estimate_RTPCR_recombination_rate();
+    double estimate_RTPCR_recombination_rate(double s);
+
+    void plot_RTPCR_recombination_LogLik(const double target, int n = 100) const;
 
     // DISPLAY I/O:
     void show_recombination_patterns() const;
@@ -149,10 +152,10 @@ private:
     double m_RT_sub_rate_CI_lower;
     double m_RT_sub_rate_CI_upper;
 
-    double m_RT_recomb_rate;
-    double m_RT_recomb_rate_CI_lower;
-    double m_RT_recomb_rate_CI_upper;
-    double m_RT_LogLik;
+    double m_RTPCR_recomb_rate;
+    double m_RTPCR_recomb_rate_CI_lower;
+    double m_RTPCR_recomb_rate_CI_upper;
+    double m_RTPCR_LogLik;
 
     double m_PCR_sub_rate;
     double m_PCR_sub_rate_CI_lower;
@@ -165,8 +168,7 @@ private:
     bool m_is_collisions_removed;
 
     // PRIVATE FUNCTIONS:
-    double calculate_RT_LogLik_recombination(double s, double r) const;
-    double neg_LogLik_recombination(double s, double r) const;
+    double calculate_RTPCR_LogLik_recombination(double s, double r) const;
 };
 
 #endif /* ALIGNMENT_HPP */

@@ -13,8 +13,6 @@ enum class referenceType {
 typedef std::tuple<uint64_t, uint64_t, uint64_t> hamming_return_type;
 typedef std::tuple<double, uint64_t, uint64_t> d_hamming_return_type;
 
-hamming_return_type hamming_distance(const std::string& sA, const std::string& sB);
-
 class record {
 public:
     // SEQUENCE PROPERTIES:
@@ -85,6 +83,8 @@ public:
     reference(const std::string& fileName_, referenceType variant_);
     reference() = default;
 
+    hamming_return_type min_hamming_hetero_distance(const std::string& s) const;
+
     void display_hamming_distance() const;
     void display_strains_hetero() const;
     void display_strains_verbose() const;
@@ -138,6 +138,50 @@ inline bool non_ambiguous_base(char base)
         errmsg.push_back(base);
         throw std::runtime_error(errmsg);
     }
+}
+
+inline hamming_return_type hamming_distance(const std::string& sA, const std::string& sB)
+{
+    int mismatches = 0;
+    int valid_trials = 0;
+    int Ns = 0;
+
+    if (sA.length() != sB.length())
+        throw std::range_error("String lengths do not match!\n");
+
+    for (size_t i = 0; i < sA.length(); ++i) {
+        if (non_ambiguous_base(sA[i]) && non_ambiguous_base(sB[i])) {
+            ++valid_trials;
+            mismatches += (sA[i] != sB[i]);
+        }
+        else {
+            ++Ns;
+        }
+    }
+
+    return hamming_return_type(mismatches, valid_trials, Ns);
+}
+
+inline hamming_return_type hamming_distance(const std::string& sA, const std::string& sB, const std::vector<int>& indices)
+{
+    int mismatches = 0;
+    int valid_trials = 0;
+    int Ns = 0;
+
+    if (sA.length() != sB.length())
+        throw std::range_error("String lengths do not match!\n");
+
+    for (auto i : indices) {
+        if (non_ambiguous_base(sA[i]) && non_ambiguous_base(sB[i])) {
+            ++valid_trials;
+            mismatches += (sA[i] != sB[i]);
+        }
+        else {
+            ++Ns;
+        }
+    }
+
+    return hamming_return_type(mismatches, valid_trials, Ns);
 }
 
 #endif /* REFERENCE_HPP */

@@ -5,29 +5,6 @@
 
 #include "proper_read.hpp"
 
-hamming_return_type
-hamming_distance(const std::string& sA, const std::string& sB)
-{
-    int mismatches = 0;
-    int valid_trials = 0;
-    int Ns = 0;
-
-    if (sA.length() != sB.length())
-        throw std::range_error("String lengths do not match!\n");
-
-    for (size_t i = 0; i < sA.length(); ++i) {
-        if (non_ambiguous_base(sA[i]) && non_ambiguous_base(sB[i])) {
-            ++valid_trials;
-            mismatches += (sA[i] != sB[i]);
-        }
-        else {
-            ++Ns;
-        }
-    }
-
-    return hamming_return_type(mismatches, valid_trials, Ns);
-}
-
 // proper_read
 proper_read::proper_read(const std::string& DNA_, const reference& reference_)
     : m_ref(reference_), m_fullRead(DNA_), m_num_N(0)
@@ -61,7 +38,7 @@ proper_read::proper_read(const std::string& DNA_, const reference& reference_)
 
     // 3.) assign RECOMBINANT if hamming distance to known is too large
     m_hamming_distance_to_best_reference = best_ham;
-    if (m_hamming_distance_to_best_reference >= 2) {
+    if (m_hamming_distance_to_best_reference > 2) {
         // suspect, possibly recombinant
         m_best_reference = m_ref.m_K;
     }
@@ -109,7 +86,7 @@ hamming_return_type consensus_read::calculate_homozygous_mismatches() const
 inline long double emission_probability(char X_i, char Z_i, long double s)
 {
     if (non_ambiguous_base(X_i))
-        return (X_i == Z_i ? 1 - s : s / 3);
+        return (X_i == Z_i ? 1 - s : s);
     else
         return 1;
 }
